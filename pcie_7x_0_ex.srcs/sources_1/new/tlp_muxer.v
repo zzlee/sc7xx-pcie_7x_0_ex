@@ -53,14 +53,6 @@ module tlp_muxer #(
 	output                   s02_axis_tready,
 	input [C_USER_WIDTH-1:0] s02_axis_tuser,
 
-	// AXIS for input 3
-	input [C_DATA_WIDTH-1:0] s03_axis_tdata,
-	input [KEEP_WIDTH-1:0]   s03_axis_tkeep,
-	input                    s03_axis_tlast,
-	input                    s03_axis_tvalid,
-	output                   s03_axis_tready,
-	input [C_USER_WIDTH-1:0] s03_axis_tuser,
-
 	// AXIS for output
 	output [C_DATA_WIDTH-1:0] m_axis_tdata,
 	output [KEEP_WIDTH-1:0]   m_axis_tkeep,
@@ -70,7 +62,7 @@ module tlp_muxer #(
 	output [C_USER_WIDTH-1:0] m_axis_tuser
 );
 
-	localparam SLAVE_COUNT = 4;
+	localparam SLAVE_COUNT = 3;
 
 	reg [SLAVE_COUNT-1:0]          slaves_arb_input_unencoded_reg;
 	wire                           slaves_arb_output_valid;
@@ -116,13 +108,6 @@ module tlp_muxer #(
 	assign s02_axis_tready = s_axis_tready[2];
 	assign s_axis_tuser[2] = s02_axis_tuser;
 
-	assign s_axis_tdata[3] = s03_axis_tdata;
-	assign s_axis_tkeep[3] = s03_axis_tkeep;
-	assign s_axis_tlast[3] = s03_axis_tlast;
-	assign s_axis_tvalid[3] = s03_axis_tvalid;
-	assign s03_axis_tready = s_axis_tready[3];
-	assign s_axis_tuser[3] = s02_axis_tuser;
-
 	assign m_axis_fire = m_axis_tvalid && m_axis_tready;
 
 	generate
@@ -133,7 +118,7 @@ module tlp_muxer #(
 		end
 	endgenerate
 
-	assign m_axis_tdata = slaves_arb_output_valid ? s_axis_tdata[slaves_arb_output_encoded] : 'hCAFECAFE; // for debug purpose
+	assign m_axis_tdata = slaves_arb_output_valid ? s_axis_tdata[slaves_arb_output_encoded] : 'hCAFECAFEABCDABCD; // for debug purpose
 	assign m_axis_tkeep = slaves_arb_output_valid ? s_axis_tkeep[slaves_arb_output_encoded] : 0;
 	assign m_axis_tlast = slaves_arb_output_valid ? s_axis_tlast[slaves_arb_output_encoded] : 0;
 	assign m_axis_tuser = slaves_arb_output_valid ? s_axis_tuser[slaves_arb_output_encoded] : 0;
@@ -149,7 +134,6 @@ module tlp_muxer #(
 				end
 			end else begin
 				slaves_arb_input_unencoded_reg <= {
-					s_axis_tvalid[3],
 					s_axis_tvalid[2],
 					s_axis_tvalid[1],
 					s_axis_tvalid[0]

@@ -36,7 +36,7 @@ module tlp_demuxer #(
 	input [KEEP_WIDTH-1:0]   m_axis_rx_tkeep,
 	input                    m_axis_rx_tlast,
 	input                    m_axis_rx_tvalid,
-	output                   m_axis_rx_tready,
+	output reg               m_axis_rx_tready,
 	input [C_USER_WIDTH-1:0] m_axis_rx_tuser,
 
 	// CQ TLP
@@ -63,54 +63,40 @@ module tlp_demuxer #(
 	input                     s01_axis_rc_tready,
 	output [C_USER_WIDTH-1:0] s01_axis_rc_tuser,
 
-	// RC02 TLP
-	output [C_DATA_WIDTH-1:0] s02_axis_rc_tdata,
-	output [KEEP_WIDTH-1:0]   s02_axis_rc_tkeep,
-	output                    s02_axis_rc_tlast,
-	output                    s02_axis_rc_tvalid,
-	input                     s02_axis_rc_tready,
-	output [C_USER_WIDTH-1:0] s02_axis_rc_tuser,
-
 	input [15:0]                  cfg_completer_id,
 	output reg [C_DATA_WIDTH-1:0] tlp_hdr_dw1_0
 );
-	localparam SLAVE_COUNT = 3;
-	localparam SLAVE_COUNT_WIDTH = $clog2(SLAVE_COUNT + 1);
-
-	// TYPE for CQ
 	localparam TLP_MEM_TYPE = 5'b00000;
-	localparam TLP_IO_TYPE  = 5'b00010;
-
-	// TYPE for RC
 	localparam TLP_CPL_TYPE = 5'b01010;
 
-	localparam STATE_BITS         = 4;
-	localparam STATE_IDLE         = 4'd0;
-	localparam STATE_DEMUX        = 4'd1;
-	localparam STATE_DEMUX_CQ     = 4'd2;
-	localparam STATE_DEMUX_RC     = 4'd3;
+	localparam SLAVE_COUNT     = 2;
+	localparam SLAVE_CNT_WIDTH = $clog2(SLAVE_COUNT + 1);
 
-	reg [STATE_BITS-1:0]        state_reg, state_next;
-	reg [SLAVE_COUNT_WIDTH-1:0] slave_index;
+	localparam STATE_BITS           = 4;
+	localparam STATE_IDLE           = 4'd0;
+	localparam STATE_DEMUX          = 4'd1;
+	localparam STATE_DEMUX_CQ       = 4'd2;
+	localparam STATE_DEMUX_RC_DW3_2 = 4'd3;
+	localparam STATE_DEMUX_RC       = 4'd4;
+	localparam STATE_DEMUX_RC_LAST  = 4'd5;
+
+	reg [STATE_BITS-1:0]       state_reg;
+	reg [C_DATA_WIDTH-1:0]     rx_tdata;
+	reg [KEEP_WIDTH-1:0]       rx_tkeep;
+	reg                        rx_tlast;
+	reg [C_USER_WIDTH-1:0]     rx_tuser;
+	reg [SLAVE_CNT_WIDTH-1:0]  s_idx;
 
 	wire m_axis_rx_fire;
 
 	wire s_axis_rc_tvalid [SLAVE_COUNT-1:0];
 	wire s_axis_rc_tready [SLAVE_COUNT-1:0];
+	wire s_axis_rc_fire [SLAVE_COUNT-1:0];
 
-	wire [4:0]  tlp_hdr_type;
-	wire [15:0] tlp_hdr_rid;
-	wire [7:0]  tlp_hdr_tag;
+	wire [4:0] tlp_hdr_type;
 
-	assign m_axis_rx_tready =(
-		state_reg == STATE_DEMUX ? 1 :
-		state_reg == STATE_DEMUX_CQ ? s_axis_cq_tready :
-		state_reg == STATE_DEMUX_RC ? s_axis_rc_tready[slave_index] : 0);
 	assign m_axis_rx_fire = m_axis_rx_tready && m_axis_rx_tvalid;
-
 	assign tlp_hdr_type = m_axis_rx_tdata[28:24];
-	assign tlp_hdr_rid = m_axis_rx_tdata[63:48];
-	assign tlp_hdr_tag = m_axis_rx_tdata[47:40];
 
 	assign s_axis_cq_tdata = m_axis_rx_tdata;
 	assign s_axis_cq_tkeep = m_axis_rx_tkeep;
@@ -118,81 +104,141 @@ module tlp_demuxer #(
 	assign s_axis_cq_tvalid = (state_reg == STATE_DEMUX_CQ ? m_axis_rx_tvalid : 1'b0);
 	assign s_axis_cq_tuser = m_axis_rx_tuser;
 
-	assign s00_axis_rc_tdata = m_axis_rx_tdata;
-	assign s00_axis_rc_tkeep = m_axis_rx_tkeep;
-	assign s00_axis_rc_tlast = m_axis_rx_tlast;
+	assign s00_axis_rc_tdata = rx_tdata;
+	assign s00_axis_rc_tkeep = rx_tkeep;
+	assign s00_axis_rc_tlast = rx_tlast;
 	assign s00_axis_rc_tvalid = s_axis_rc_tvalid[0];
 	assign s_axis_rc_tready[0] = s00_axis_rc_tready;
-	assign s00_axis_rc_tuser = m_axis_rx_tuser;
+	assign s00_axis_rc_tuser = rx_tuser;
 
-	assign s01_axis_rc_tdata = m_axis_rx_tdata;
-	assign s01_axis_rc_tkeep = m_axis_rx_tkeep;
-	assign s01_axis_rc_tlast = m_axis_rx_tlast;
+	assign s01_axis_rc_tdata = rx_tdata;
+	assign s01_axis_rc_tkeep = rx_tkeep;
+	assign s01_axis_rc_tlast = rx_tlast;
 	assign s01_axis_rc_tvalid = s_axis_rc_tvalid[1];
 	assign s_axis_rc_tready[1] = s01_axis_rc_tready;
-	assign s01_axis_rc_tuser = m_axis_rx_tuser;
-
-	assign s02_axis_rc_tdata = m_axis_rx_tdata;
-	assign s02_axis_rc_tkeep = m_axis_rx_tkeep;
-	assign s02_axis_rc_tlast = m_axis_rx_tlast;
-	assign s02_axis_rc_tvalid = s_axis_rc_tvalid[2];
-	assign s_axis_rc_tready[2] = s02_axis_rc_tready;
-	assign s02_axis_rc_tuser = m_axis_rx_tuser;
+	assign s01_axis_rc_tuser = rx_tuser;
 
 	generate
 		genvar i;
 
 		for (i = 0; i < SLAVE_COUNT; i = i + 1) begin
-			assign s_axis_rc_tvalid[i] = (state_reg == STATE_DEMUX_RC && slave_index == i) ? m_axis_rx_tvalid : 1'b0;
+			assign s_axis_rc_tvalid[i] =
+				(state_reg == STATE_DEMUX_RC && s_idx == i)      ? m_axis_rx_tvalid :
+				(state_reg == STATE_DEMUX_RC_LAST && s_idx == i) ? 1'b1             : 1'b0;
+			assign s_axis_rc_fire[i] = s_axis_rc_tready[i] && s_axis_rc_tvalid[i];
 		end
 	endgenerate
 
-	always @(*) begin
-		state_next = state_reg;
-
-		case(state_reg)
-			STATE_IDLE: state_next = STATE_DEMUX;
-
-			STATE_DEMUX:
-				if(m_axis_rx_fire) begin
-					case(tlp_hdr_type)
-						TLP_MEM_TYPE: state_next = STATE_DEMUX_CQ;
-
-						TLP_CPL_TYPE:
-							if(tlp_hdr_rid == cfg_completer_id && tlp_hdr_tag < SLAVE_COUNT) begin
-								state_next = STATE_DEMUX_RC;
-							end
-					endcase
-				end
-
-			STATE_DEMUX_CQ:
-				if(m_axis_rx_fire && m_axis_rx_tlast) begin
-					state_next = STATE_DEMUX;
-				end
-
-			STATE_DEMUX_RC:
-				if(m_axis_rx_fire && m_axis_rx_tlast) begin
-					state_next = STATE_DEMUX;
-				end
-		endcase
-	end
-
+	// state_reg
 	always @(posedge clk or negedge rst_n) begin
 		if(~rst_n) begin
 			state_reg <= STATE_IDLE;
-			tlp_hdr_dw1_0 <= 0;
-			slave_index <= 0;
 		end else begin
-			state_reg <= state_next;
-
 			case(state_reg)
-				STATE_DEMUX:
+				STATE_IDLE: begin
+					state_reg <= STATE_DEMUX;
+				end
+
+				STATE_DEMUX: begin
 					if(m_axis_rx_fire) begin
-						tlp_hdr_dw1_0 <= m_axis_rx_tdata;
-						slave_index <= tlp_hdr_tag[SLAVE_COUNT_WIDTH-1:0];
+						case(tlp_hdr_type)
+							TLP_MEM_TYPE: state_reg <= STATE_DEMUX_CQ;
+							TLP_CPL_TYPE: state_reg <= STATE_DEMUX_RC_DW3_2;
+						endcase
 					end
+				end
+
+				STATE_DEMUX_CQ: begin
+					if(m_axis_rx_fire && m_axis_rx_tlast) begin
+						state_reg <= STATE_DEMUX;
+					end
+				end
+
+				STATE_DEMUX_RC_DW3_2: begin
+					if(m_axis_rx_fire) begin
+						if(m_axis_rx_tdata[31:16] == cfg_completer_id && m_axis_rx_tdata[15:8+4] < SLAVE_COUNT) begin // cpl_req_id && cpl_req_tag
+							state_reg <= STATE_DEMUX_RC;
+
+							if(m_axis_rx_tlast) begin
+								state_reg <= STATE_DEMUX_RC_LAST;
+							end
+						end else begin
+							state_reg <= STATE_DEMUX;
+						end
+					end
+				end
+
+				STATE_DEMUX_RC: begin
+					if(m_axis_rx_fire && m_axis_rx_tlast) begin
+						state_reg <= STATE_DEMUX_RC_LAST;
+					end
+				end
+
+				STATE_DEMUX_RC_LAST: begin
+					if(s_axis_rc_fire[s_idx]) begin
+						state_reg <= STATE_DEMUX;
+					end
+				end
 			endcase
 		end
 	end
 
+	// m_axis_rx_tready
+	always @(*) begin
+		m_axis_rx_tready = 0;
+
+		case(state_reg)
+			STATE_DEMUX: begin
+				m_axis_rx_tready = 1;
+			end
+
+			STATE_DEMUX_CQ: begin
+				m_axis_rx_tready = s_axis_cq_tready;
+			end
+
+			STATE_DEMUX_RC_DW3_2: begin
+				m_axis_rx_tready = 1;
+			end
+
+			STATE_DEMUX_RC: begin
+				m_axis_rx_tready = s_axis_rc_tready[s_idx];
+			end
+		endcase
+	end
+
+	// tlp_hdr_dw1_0, s_idx, rx_tdata, rx_tlast, rx_tlast, rx_tuser
+	always @(posedge clk or negedge rst_n) begin
+		if(~rst_n) begin
+			tlp_hdr_dw1_0 <= 0;
+			s_idx <= 0;
+			rx_tdata <= 0;
+			rx_tkeep <= 0;
+			rx_tlast <= 0;
+			rx_tuser <= 0;
+		end else begin
+			case(state_reg)
+				STATE_DEMUX:
+					if(m_axis_rx_fire) begin
+						tlp_hdr_dw1_0 <= m_axis_rx_tdata;
+					end
+
+				STATE_DEMUX_RC_DW3_2:
+					if(m_axis_rx_fire) begin
+						s_idx <= m_axis_rx_tdata[15:8+4];
+						rx_tdata <= m_axis_rx_tdata;
+						rx_tkeep <= m_axis_rx_tkeep;
+						rx_tlast <= m_axis_rx_tlast;
+						rx_tuser <= m_axis_rx_tuser;
+					end
+
+				STATE_DEMUX_RC:
+					if(m_axis_rx_fire) begin
+						rx_tdata <= m_axis_rx_tdata;
+						rx_tkeep <= m_axis_rx_tkeep;
+						rx_tlast <= m_axis_rx_tlast;
+						rx_tuser <= m_axis_rx_tuser;
+					end
+			endcase
+		end
+	end
 endmodule

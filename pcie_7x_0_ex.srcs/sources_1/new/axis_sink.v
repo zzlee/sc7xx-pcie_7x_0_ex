@@ -51,7 +51,7 @@ module axis_sink # (
 
 	wire t_fire;
 
-	reg [STATE_BITS-1:0] state_reg, state_next;
+	reg [STATE_BITS-1:0] state_reg;
 
 	assign ap_idle = (state_reg == STATE_IDLE);
 	assign ap_done = (state_reg == STATE_FINISH);
@@ -60,34 +60,27 @@ module axis_sink # (
 	assign t_fire = s_axis_tvalid && s_axis_tready;
 	assign s_axis_tready = (state_reg == STATE_START);
 
-	always @(*) begin
-		state_next = state_reg;
-
-		case(state_reg)
-			STATE_IDLE:
-				if(ap_start)
-					state_next = STATE_START;
-
-			STATE_START: begin
-			end
-
-			STATE_FINISH: begin
-			end
-
-			default: state_next = STATE_IDLE;
-		endcase
-	end
-
 	always @(posedge clk or negedge rst_n) begin
 		if(! rst_n) begin
 			state_reg <= STATE_IDLE;
 		end else begin
-			state_reg <= state_next;
-
-			if(t_fire) begin
-				$display("t_fire: data='h%X keep='h%X last=%d user=%d", s_axis_tdata, s_axis_tkeep, s_axis_tlast, s_axis_tuser);
-			end
+			case(state_reg)
+				STATE_IDLE: begin
+					if(ap_start) begin
+						state_reg <= STATE_START;
+					end
+				end
+			endcase
 		end
 	end
 
+	always @(*) begin
+		case(state_reg)
+			STATE_START: begin
+				if(t_fire) begin
+					$display("t_fire: data='h%X keep='h%X last=%d user=%d", s_axis_tdata, s_axis_tkeep, s_axis_tlast, s_axis_tuser);
+				end
+			end
+		endcase
+	end
 endmodule

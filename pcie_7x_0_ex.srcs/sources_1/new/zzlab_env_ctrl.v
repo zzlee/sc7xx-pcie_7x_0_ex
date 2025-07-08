@@ -262,7 +262,7 @@ always @(posedge ACLK) begin
         int_out_ap_rst_n <= 0;
     else if (ACLK_EN) begin
         if (w_hs && waddr == ADDR_OUT_AP_RST_N)
-            int_out_ap_rst_n <= WDATA[31:0];
+			int_out_ap_rst_n[31:0] <= (WDATA[31:0] & wmask) | (int_out_ap_rst_n[31:0] & ~wmask);
     end
 end
 
@@ -272,7 +272,7 @@ always @(posedge ACLK) begin
         int_out_value0 <= 0;
     else if (ACLK_EN) begin
         if (w_hs && waddr == ADDR_OUT_VALUE0)
-            int_out_value0 <= WDATA[31:0];
+			int_out_value0[31:0] <= (WDATA[31:0] & wmask) | (int_out_value0[31:0] & ~wmask);
     end
 end
 

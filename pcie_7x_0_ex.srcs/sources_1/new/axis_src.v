@@ -50,7 +50,7 @@ module axis_src #(
 
 	wire t_fire;
 
-	reg [STATE_BITS-1:0]    state_reg, state_next;
+	reg [STATE_BITS-1:0]    state_reg;
 	reg [7:0]               data_seed_reg;
 	wire [C_DATA_WIDTH-1:0] generated_data;
 
@@ -74,42 +74,48 @@ module axis_src #(
 	assign m_axis_tlast = 0;
 	assign m_axis_tvalid = (state_reg == STATE_START);
 
-	always @(*) begin
-		state_next = state_reg;
+	always @(posedge clk or negedge rst_n) begin
+		if(~rst_n) begin
+			state_reg <= STATE_IDLE;
+		end else begin
+			case(state_reg)
+				STATE_IDLE: begin
+					if(ap_start) begin
+						state_reg <= STATE_START;
+					end
+				end
 
-		case(state_reg)
-			STATE_IDLE: begin
-				if(ap_start)
-					state_next = STATE_START;
-			end
-
-			STATE_START: begin
-			end
-
-			STATE_FINISH: state_next = STATE_IDLE;
-
-			default: state_next = STATE_IDLE;
-		endcase
+				STATE_FINISH: begin
+					state_reg <= STATE_IDLE;
+				end
+			endcase
+		end
 	end
 
 	always @(posedge clk or negedge rst_n) begin
 		if(~rst_n) begin
-			state_reg <= STATE_IDLE;
 			data_seed_reg <= 0;
 			m_axis_tuser <= 1;
 		end else begin
-			state_reg <= state_next;
-
-			if(t_fire) begin
-				data_seed_reg <= data_seed_reg + 1;
-				m_axis_tuser <= 0;
-			end
-
-			if(t_fire) begin
-				$display("t_fire: data='h%X keep='h%X last=%d user=%d",
-					m_axis_tdata, m_axis_tkeep, m_axis_tlast, m_axis_tuser);
-			end
+			case(state_reg)
+				STATE_START: begin
+					if(t_fire) begin
+						data_seed_reg <= data_seed_reg + 1;
+						m_axis_tuser <= 0;
+					end
+				end
+			endcase
 		end
 	end
 
+	always @(*) begin
+		case(state_reg)
+			STATE_START: begin
+				if(t_fire) begin
+					$display("t_fire: data='h%X keep='h%X last=%d user=%d",
+						m_axis_tdata, m_axis_tkeep, m_axis_tlast, m_axis_tuser);
+				end
+			end
+		endcase
+	end
 endmodule

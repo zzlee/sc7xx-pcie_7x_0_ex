@@ -5,7 +5,7 @@
 // 
 // Create Date: 06/23/2025 03:08:21 PM
 // Design Name: 
-// Module Name: pcie_to_ctrl
+// Module Name: pcie_turnoff
 // Project Name: 
 // Target Devices: 
 // Tool Versions: 
@@ -20,7 +20,7 @@
 //////////////////////////////////////////////////////////////////////////////////
 
 
-module pcie_to_ctrl(
+module pcie_turnoff(
 	input clk,
 	input rst_n,
 

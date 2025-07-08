@@ -19,7 +19,6 @@
 // 
 //////////////////////////////////////////////////////////////////////////////////
 
-
 module tlp_dma_wr #(
 	parameter C_DATA_WIDTH     = 64,
 	parameter C_RC_USER_WIDTH  = 22,
@@ -82,7 +81,7 @@ module tlp_dma_wr #(
 	localparam TLP_MEM_WR32_FMT_TYPE = 7'b10_00000;
 	localparam TLP_MEM_WR64_FMT_TYPE = 7'b11_00000;
 
-	localparam BURST_SIZE  = 128; // bytes per burst
+	localparam BURST_SIZE  = 256; // bytes per burst (FIFO depth 256 >> 2 = 64)
 	localparam BURST_WIDTH = $clog2(BURST_SIZE + 1);
 
 	localparam MAX_SIZE   = 4096;
@@ -106,15 +105,26 @@ module tlp_dma_wr #(
 	localparam SRC_STATE_RX_DW1 = 3'd3;
 	localparam SRC_STATE_BITS   = 3;
 
-	reg [STATE_BITS-1:0]  state_reg, state_next;
+	reg [STATE_BITS-1:0]  state_reg;
 	reg [63:0]            buf_addr_int, buf_addr_next;
-	reg [SIZE_WIDTH-1:0]  size_int;
+	reg                   buf_addr_next_carry;
+	reg [SIZE_WIDTH-1:0]  size_int, size_next;
 	reg [TIMES_WIDTH-1:0] times_int;
 	reg [BURST_WIDTH-1:0] burst_bytes_int;
 	reg                   src_selector; // m00, m01
 
-	wire                            s_axis_rr_fire;
-	wire [$clog2(C_DATA_WIDTH)-1:0] s_axis_rr_tbytes;
+	wire s_axis_rr_fire;
+
+	// RX TLP DW1_DW0
+	wire [6:0]  rx_tlp_hdr_fmt_type;
+	wire [2:0]  rx_tlp_hdr_tc;
+	wire        rx_tlp_hdr_td;
+	wire        rx_tlp_hdr_ep;
+	wire [1:0]  rx_tlp_hdr_attr;
+	wire [9:0]  rx_tlp_hdr_len;
+	wire [15:0] rx_tlp_hdr_rid;
+	wire [7:0]  rx_tlp_hdr_tag;
+	wire [7:0]  rx_tlp_hdr_be;
 
 	wire [7:0] tlp_hdr_tag;
 	wire [3:0] tlp_hdr_last_be;
@@ -137,6 +147,7 @@ module tlp_dma_wr #(
 	wire m00_axis_fire;
 	wire m01_axis_fire;
 
+	// m00_fifo_U
 	reg [SRC_STATE_BITS-1:0]   m00_state;
 	reg [C_SRC_DATA_WIDTH-1:0] m00_dw0;
 	wire                       m00_fifo_wr_en;
@@ -146,6 +157,7 @@ module tlp_dma_wr #(
 	wire                       m00_fifo_data_valid;
 	wire                       m00_fifo_full;
 
+	// m00_fifo_U
 	reg [SRC_STATE_BITS-1:0]   m01_state;
 	reg [C_SRC_DATA_WIDTH-1:0] m01_dw0;
 	wire                       m01_fifo_wr_en;
@@ -154,10 +166,6 @@ module tlp_dma_wr #(
 	wire [C_DATA_WIDTH-1:0]    m01_fifo_rd_data;
 	wire                       m01_fifo_data_valid;
 	wire                       m01_fifo_full;
-
-	wire                       mxx_fifo_rd_en;
-	wire [C_DATA_WIDTH-1:0]    mxx_fifo_rd_data;
-	wire                       mxx_fifo_data_valid;
 
 	assign ap_idle = (state_reg == STATE_IDLE);
 	assign ap_done = (state_reg == STATE_FINISH);
@@ -170,7 +178,6 @@ module tlp_dma_wr #(
 	assign m_axis_rc_tready = 1'b0; // Never receive RC
 
 	assign s_axis_rr_fire = s_axis_rr_tready && s_axis_rr_tvalid;
-	assign s_axis_rr_tbytes = (s_axis_rr_tkeep == 8'h0F ? 4 : 8);
 
 	assign m00_axis_tready = ((m00_state == SRC_STATE_RX_DW0 || m00_state == SRC_STATE_RX_DW1) ? !m00_fifo_full : 0);
 	assign m00_axis_fire = m00_axis_tready && m00_axis_tvalid;
@@ -182,7 +189,17 @@ module tlp_dma_wr #(
 	assign m01_fifo_wr_en = (m01_state == SRC_STATE_RX_DW1 ? m01_axis_fire : 0);
 	assign m01_fifo_wr_data = { m01_axis_tdata, m01_dw0 };
 
-	assign tlp_hdr_tag = 8'd0;
+	assign rx_tlp_hdr_fmt_type = tlp_hdr_dw1_0[30:24];
+	assign rx_tlp_hdr_tc = tlp_hdr_dw1_0[22:20];
+	assign rx_tlp_hdr_td = tlp_hdr_dw1_0[15];
+	assign rx_tlp_hdr_ep = tlp_hdr_dw1_0[14];
+	assign rx_tlp_hdr_attr = tlp_hdr_dw1_0[13:12];
+	assign rx_tlp_hdr_len = tlp_hdr_dw1_0[9:0];
+	assign rx_tlp_hdr_rid = tlp_hdr_dw1_0[63:48];
+	assign rx_tlp_hdr_tag = tlp_hdr_dw1_0[47:40];
+	assign rx_tlp_hdr_be = tlp_hdr_dw1_0[39:32];
+
+	assign tlp_hdr_tag = 8'd0; // for tlp_demuxer/s00_axis_rc
 	assign tlp_hdr_last_be = 4'b1111;
 	assign tlp_hdr_first_be = 4'b1111;
 	assign tlp_hdr_fmt_type = (buf_addr_32bit ? TLP_MEM_WR32_FMT_TYPE : TLP_MEM_WR64_FMT_TYPE);
@@ -218,23 +235,19 @@ module tlp_dma_wr #(
 		buf_addr_hi
 	};
 
-	fifo_fwft #(
-		.DATA_WIDTH(C_DATA_WIDTH),
-		.DEPTH     (BURST_SIZE / (C_DATA_WIDTH / 8))
-	) m00_fifo_U(
+	tlp_dma_wr_m_fifo tlp_dma_wr_m00_fifo_U (
 		.clk(clk),
-		.rst_n(rst_n),
-
+		.srst(~rst_n),
 		.wr_en(m00_fifo_wr_en),
-		.wr_data(m00_fifo_wr_data),
+		.din(m00_fifo_wr_data),
 		.rd_en(m00_fifo_rd_en),
-		.rd_data(m00_fifo_rd_data),
-		.data_valid(m00_fifo_data_valid),
+		.dout(m00_fifo_rd_data),
 		.full(m00_fifo_full),
-		.empty()
+		.empty(),
+		.valid(m00_fifo_data_valid)
 	);
 
-	// m00_fifo_U state machine
+	// m00_state, m00_dw0
 	always @(posedge clk or negedge rst_n) begin
 		if(~rst_n) begin
 			m00_state <= SRC_STATE_IDLE;
@@ -258,23 +271,19 @@ module tlp_dma_wr #(
 		end
 	end
 
-	fifo_fwft #(
-		.DATA_WIDTH(C_DATA_WIDTH),
-		.DEPTH     (BURST_SIZE / (C_DATA_WIDTH / 8))
-	) m01_fifo_U(
+	tlp_dma_wr_m_fifo tlp_dma_wr_m01_fifo_U (
 		.clk(clk),
-		.rst_n(rst_n),
-
+		.srst(~rst_n),
 		.wr_en(m01_fifo_wr_en),
-		.wr_data(m01_fifo_wr_data),
+		.din(m01_fifo_wr_data),
 		.rd_en(m01_fifo_rd_en),
-		.rd_data(m01_fifo_rd_data),
-		.data_valid(m01_fifo_data_valid),
+		.dout(m01_fifo_rd_data),
 		.full(m01_fifo_full),
-		.empty()
+		.empty(),
+		.valid(m01_fifo_data_valid)
 	);
 
-	// m01_fifo_U state machine
+	// m01_state, m01_dw0
 	always @(posedge clk or negedge rst_n) begin
 		if(~rst_n) begin
 			m01_state <= SRC_STATE_IDLE;
@@ -298,9 +307,144 @@ module tlp_dma_wr #(
 		end
 	end
 
-	always @(*) begin
-		state_next = state_reg;
+	// state_reg
+	always @(posedge clk or negedge rst_n) begin
+		if(~rst_n) begin
+			state_reg <= STATE_IDLE;
+		end else begin
+			case(state_reg)
+				STATE_IDLE:
+					if(ap_start) begin
+						state_reg <= STATE_DMA_WR_DONE;
+					end
 
+				STATE_DMA_WR_DW1_0:
+					if(s_axis_rr_fire) begin
+						state_reg <= buf_addr_32bit ? STATE_DMA_WR32_DW3_2 : STATE_DMA_WR64_DW3_2;
+					end
+
+				STATE_DMA_WR32_DW3_2: begin
+					if(s_axis_rr_fire) begin
+						state_reg <= STATE_DMA_WR;
+
+						if(s_axis_rr_tlast) begin
+							state_reg <= STATE_DMA_WR_DONE;
+
+							if(size_next == 0 && times_int == 1)
+								state_reg <= STATE_FINISH;
+						end
+					end
+				end
+
+				STATE_DMA_WR64_DW3_2: begin
+					if(s_axis_rr_fire) begin
+						state_reg <= STATE_DMA_WR;
+					end
+				end
+
+				STATE_DMA_WR: begin
+					if(s_axis_rr_fire) begin
+						if(s_axis_rr_tlast) begin
+							state_reg <= STATE_DMA_WR_DONE;
+
+							if(size_next == 0 && times_int == 1)
+								state_reg <= STATE_FINISH;
+						end
+					end
+				end
+
+				STATE_DMA_WR_DONE: begin
+					state_reg <= STATE_DMA_WR_DW1_0;
+				end
+
+				STATE_FINISH: begin
+					state_reg <= STATE_IDLE;
+				end
+			endcase
+		end
+	end
+
+	// buf_addr_int, buf_addr_next, buf_addr_next_carry, size_int, size_next, times_int, burst_bytes_int, src_selector
+	always @(posedge clk or negedge rst_n) begin
+		if(~rst_n) begin
+			buf_addr_int <= 0;
+			buf_addr_next <= 0;
+			buf_addr_next_carry <= 0;
+			size_int <= 0;
+			size_next <= 0;
+			times_int <= 0;
+			burst_bytes_int <= 0;
+			src_selector <= 0;
+		end else begin
+			case(state_reg)
+				STATE_IDLE:
+					if(ap_start) begin
+						buf_addr_int <= buf_addr;
+						size_int <= size_4x;
+						times_int <= times;
+					end
+
+				STATE_DMA_WR_DW1_0: begin
+					buf_addr_next[63:32] <= buf_addr_int[63:32] + buf_addr_next_carry;
+				end
+
+				STATE_DMA_WR32_DW3_2:
+					if(s_axis_rr_fire) begin
+						burst_bytes_int <= burst_bytes_int - 4;
+
+						if(s_axis_rr_tlast) begin
+							buf_addr_int <= buf_addr_next;
+							size_int <= size_next;
+
+							if(size_next == 0) begin
+								times_int <= times_int - 1;
+
+								buf_addr_int <= buf_addr;
+								size_int <= size_4x;
+							end
+						end
+					end
+
+				STATE_DMA_WR: begin
+					if(s_axis_rr_fire) begin
+						burst_bytes_int <= ((burst_bytes_int == 4) ? 0 : (burst_bytes_int - 8));
+
+						if(s_axis_rr_tlast) begin
+							buf_addr_int <= buf_addr_next;
+							size_int <= size_next;
+
+							if(size_next == 0) begin
+								times_int <= times_int - 1;
+
+								buf_addr_int <= buf_addr;
+								size_int <= size_4x;
+							end
+						end
+					end
+				end
+
+				STATE_DMA_WR_DONE: begin
+					if(size_int > BURST_SIZE) begin
+						{buf_addr_next_carry, buf_addr_next[31:0]} <= buf_addr_int[31:0] + BURST_SIZE;
+						size_next <= size_int - BURST_SIZE;
+						burst_bytes_int <= BURST_SIZE;
+					end else begin
+						{buf_addr_next_carry, buf_addr_next[31:0]} <= buf_addr_int[31:0] + size_int;
+						size_next <= 0;
+						burst_bytes_int <= size_int;
+					end
+
+					if(src_selector == 0)
+						src_selector <= 1;
+					else if(src_selector == 1)
+						src_selector <= 0;
+				end
+			endcase
+		end
+	end
+
+	// s_axis_rr_tdata, s_axis_rr_tkeep, s_axis_rr_tlast, s_axis_rr_tvalid, m00_fifo_rd_en, m01_fifo_rd_en
+	always @(*) begin
 		s_axis_rr_tdata = 'hAABBCCDDCAFECAFE; // for debug purpose
 		s_axis_rr_tkeep = 0;
 		s_axis_rr_tlast = 0;
@@ -310,11 +454,6 @@ module tlp_dma_wr #(
 		m01_fifo_rd_en = 0;
 
 		case(state_reg)
-			STATE_IDLE:
-				if(ap_start) begin
-					state_next = STATE_DMA_WR_DONE;
-				end
-
 			STATE_DMA_WR_DW1_0: begin
 				s_axis_rr_tlast = 0;
 				s_axis_rr_tdata = {           // Bits
@@ -337,9 +476,6 @@ module tlp_dma_wr #(
 				};
 				s_axis_rr_tkeep = 8'hFF;
 				s_axis_rr_tvalid = 1;
-				if(s_axis_rr_fire) begin
-					state_next = buf_addr_32bit ? STATE_DMA_WR32_DW3_2 : STATE_DMA_WR64_DW3_2;
-				end
 			end
 
 			STATE_DMA_WR32_DW3_2: begin
@@ -355,17 +491,6 @@ module tlp_dma_wr #(
 					s_axis_rr_tvalid = m01_fifo_data_valid;
 					m01_fifo_rd_en = s_axis_rr_fire;
 				end
-
-				if(s_axis_rr_fire) begin
-					state_next = STATE_DMA_WR;
-
-					if(s_axis_rr_tlast) begin
-						state_next = STATE_DMA_WR_DONE;
-
-						if(size_int == 4 && times_int == 1)
-							state_next = STATE_FINISH;
-					end
-				end
 			end
 
 			STATE_DMA_WR64_DW3_2: begin
@@ -373,10 +498,6 @@ module tlp_dma_wr #(
 				s_axis_rr_tdata = pci_wr64_addr;
 				s_axis_rr_tkeep = 8'hFF;
 				s_axis_rr_tvalid = 1;
-
-				if(s_axis_rr_fire) begin
-					state_next = STATE_DMA_WR;
-				end
 			end
 
 			STATE_DMA_WR: begin
@@ -392,94 +513,7 @@ module tlp_dma_wr #(
 					s_axis_rr_tvalid = m01_fifo_data_valid;
 					m01_fifo_rd_en = s_axis_rr_fire;
 				end
-
-				if(s_axis_rr_fire) begin
-					state_next = STATE_DMA_WR;
-
-					if(s_axis_rr_tlast) begin
-						state_next = STATE_DMA_WR_DONE;
-
-						if(size_int == s_axis_rr_tbytes && times_int == 1)
-							state_next = STATE_FINISH;
-					end
-				end
 			end
-
-			STATE_DMA_WR_DONE:
-				state_next = STATE_DMA_WR_DW1_0;
-
-			STATE_FINISH: state_next = STATE_IDLE;
 		endcase
-	end
-
-	always @(posedge clk or negedge rst_n) begin
-		if(~rst_n) begin
-			state_reg <= STATE_IDLE;
-			buf_addr_int <= 0;
-			size_int <= 0;
-			times_int <= 0;
-			burst_bytes_int <= 0;
-			src_selector <= 0;
-		end else begin
-			state_reg <= state_next;
-
-			case(state_reg)
-				STATE_IDLE:
-					if(ap_start) begin
-						buf_addr_int <= buf_addr;
-						size_int <= size_4x;
-						times_int <= times;
-					end
-
-				STATE_DMA_WR32_DW3_2:
-					if(s_axis_rr_fire) begin
-						burst_bytes_int <= burst_bytes_int - 4;
-						size_int <= size_int - 4;
-
-						if(s_axis_rr_tlast) begin
-							buf_addr_int <= buf_addr_next;
-
-							if(size_int == 4) begin
-								times_int <= times_int - 1;
-
-								buf_addr_int <= buf_addr;
-								size_int <= size_4x;
-							end
-						end
-					end
-
-				STATE_DMA_WR:
-					if(s_axis_rr_fire) begin
-						burst_bytes_int <= burst_bytes_int - s_axis_rr_tbytes;
-						size_int <= size_int - s_axis_rr_tbytes;
-
-						if(s_axis_rr_tlast) begin
-							buf_addr_int <= buf_addr_next;
-
-							if(size_int == s_axis_rr_tbytes) begin
-								times_int <= times_int - 1;
-
-								buf_addr_int <= buf_addr;
-								size_int <= size_4x;
-							end
-						end
-					end
-
-				STATE_DMA_WR_DONE: begin
-					if(size_int > BURST_SIZE) begin
-						buf_addr_next <= buf_addr_int + BURST_SIZE;
-						burst_bytes_int <= BURST_SIZE;
-					end else begin
-						buf_addr_next <= buf_addr_int + size_int;
-						burst_bytes_int <= size_int;
-					end
-
-					if(src_selector == 0)
-						src_selector <= 1;
-					else if(src_selector == 1)
-						src_selector <= 0;
-				end
-			endcase
-		end
 	end
 endmodule

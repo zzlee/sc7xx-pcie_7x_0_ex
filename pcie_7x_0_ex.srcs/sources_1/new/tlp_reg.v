@@ -90,8 +90,8 @@ module tlp_reg #(
 	localparam TLP_MEM_WR32_FMT_TYPE = 7'b10_00000;
 	localparam TLP_CPLD_FMT_TYPE     = 7'b10_01010;
 
-	reg [STATE_BITS-1:0]   state_reg, state_next;
-	reg [C_DATA_WIDTH-1:0] ctrl_rx_data, ctrl_rx_data_int;
+	reg [STATE_BITS-1:0]   state_reg;
+	reg [C_DATA_WIDTH-1:0] ctrl_rx_data;
 
 	wire m_axis_cq_fire;
 	wire s_axis_cc_fire;
@@ -102,8 +102,6 @@ module tlp_reg #(
 	wire s_axi_ctrl_r_fire;
 
 	// TLP DW1_DW0
-	wire [1:0]  tlp_hdr_fmt;
-	wire [4:0]  tlp_hdr_type;
 	wire [6:0]  tlp_hdr_fmt_type;
 	wire [2:0]  tlp_hdr_tc;
 	wire        tlp_hdr_td;
@@ -115,7 +113,7 @@ module tlp_reg #(
 	wire [7:0]  tlp_hdr_be;
 
 	// TLP DW3_DW2
-	reg [C_DATA_WIDTH-1:0] tlp_hdr_dw3_2, tlp_hdr_dw3_2_int;
+	reg [C_DATA_WIDTH-1:0] tlp_hdr_dw3_2;
 	wire [31:0]            tlp_hdr_addr32;
 
 	wire [11:0] byte_count;
@@ -137,8 +135,6 @@ module tlp_reg #(
 	assign s_axi_ctrl_ar_fire = s_axi_ctrl_arready && s_axi_ctrl_arvalid;
 	assign s_axi_ctrl_r_fire = s_axi_ctrl_rready && s_axi_ctrl_rvalid;
 
-	assign tlp_hdr_fmt = tlp_hdr_dw1_0[30:29];
-	assign tlp_hdr_type = tlp_hdr_dw1_0[28:24];
 	assign tlp_hdr_fmt_type = tlp_hdr_dw1_0[30:24];
 	assign tlp_hdr_tc = tlp_hdr_dw1_0[22:20];
 	assign tlp_hdr_td = tlp_hdr_dw1_0[15];
@@ -161,11 +157,82 @@ module tlp_reg #(
 	assign s_axi_ctrl_wstrb = {(CTRL_WSTRB_WIDTH){1'b1}};
 	assign s_axi_ctrl_araddr = bar0_addr;
 
-	always @(*) begin
-		state_next = state_reg;
-		tlp_hdr_dw3_2_int = tlp_hdr_dw3_2;
-		ctrl_rx_data_int = ctrl_rx_data;
+	// state_reg
+	always @(posedge clk or negedge rst_n) begin
+		if(~rst_n) begin
+			state_reg <= STATE_IDLE;
+		end else begin
+			case(state_reg)
+				STATE_IDLE: state_reg <= STATE_RX_DW3_2;
 
+				STATE_RX_DW3_2: begin
+					if(m_axis_cq_fire) begin
+						case(tlp_hdr_fmt_type)
+							TLP_MEM_RD32_FMT_TYPE:
+								if(tlp_hdr_len == 10'b1)
+									state_reg <= STATE_CTRL_AR;
+								else
+									state_reg <= STATE_IDLE;
+
+							TLP_MEM_WR32_FMT_TYPE:
+								if(tlp_hdr_len == 10'b1)
+									state_reg <= STATE_CTRL_AW;
+								else
+									state_reg <= STATE_IDLE;
+
+							default: state_reg <= STATE_IDLE;
+						endcase
+					end
+				end
+
+				STATE_CTRL_AW: begin
+					if(s_axi_ctrl_aw_fire) begin
+						state_reg <= STATE_CTRL_W;
+					end
+				end
+
+				STATE_CTRL_W: begin
+					if(s_axi_ctrl_w_fire) begin
+						state_reg <= STATE_CTRL_B;
+					end
+				end
+
+				STATE_CTRL_B: begin
+					if(s_axi_ctrl_b_fire) begin
+						state_reg <= STATE_RX_DW3_2;
+					end
+				end
+
+				STATE_CTRL_AR: begin
+					if(s_axi_ctrl_ar_fire) begin
+						state_reg <= STATE_CTRL_R;
+					end
+				end
+
+				STATE_CTRL_R: begin
+					if(s_axi_ctrl_r_fire) begin
+						state_reg <= STATE_TX_DW1_0;
+					end
+				end
+
+				STATE_TX_DW1_0: begin
+					if(s_axis_cc_fire) begin
+						state_reg <= STATE_TX_DW3_2;
+					end
+				end
+
+				STATE_TX_DW3_2: begin
+					if(s_axis_cc_fire) begin
+						state_reg <= STATE_RX_DW3_2;
+					end
+				end
+			endcase
+		end
+	end
+
+	// m_axis_cq_tready, s_axis_cc_tdata, s_axis_cc_tkeep, s_axis_cc_tlast, s_axis_cc_tvalid
+	// s_axi_ctrl_awvalid, s_axi_ctrl_wvalid, s_axi_ctrl_bready, s_axi_ctrl_arvalid, s_axi_ctrl_rready
+	always @(*) begin
 		m_axis_cq_tready = 0;
 		s_axis_cc_tdata = 'hAABBCCDDCAFECAFE; // for debug purpose
 		s_axis_cc_tkeep = 0;
@@ -179,65 +246,28 @@ module tlp_reg #(
 		s_axi_ctrl_rready = 0;
 
 		case(state_reg)
-			STATE_IDLE: state_next = STATE_RX_DW3_2;
-
 			STATE_RX_DW3_2: begin
 				m_axis_cq_tready = 1;
-				if(m_axis_cq_fire) begin
-					tlp_hdr_dw3_2_int = m_axis_cq_tdata;
-
-					case(tlp_hdr_fmt_type)
-						TLP_MEM_RD32_FMT_TYPE:
-							if(tlp_hdr_len == 10'b1)
-								state_next = STATE_CTRL_AR;
-							else
-								state_next = STATE_IDLE;
-
-						TLP_MEM_WR32_FMT_TYPE:
-							if(tlp_hdr_len == 10'b1)
-								state_next = STATE_CTRL_AW;
-							else
-								state_next = STATE_IDLE;
-
-						default: state_next = STATE_IDLE;
-					endcase
-				end
 			end
 
 			STATE_CTRL_AW: begin
 				s_axi_ctrl_awvalid = 1;
-				if(s_axi_ctrl_aw_fire) begin
-					state_next = STATE_CTRL_W;
-				end
 			end
 
 			STATE_CTRL_W: begin
 				s_axi_ctrl_wvalid = 1;
-				if(s_axi_ctrl_w_fire) begin
-					state_next = STATE_CTRL_B;
-				end
 			end
 
 			STATE_CTRL_B: begin
 				s_axi_ctrl_bready = 1;
-				if(s_axi_ctrl_b_fire) begin
-					state_next = STATE_RX_DW3_2;
-				end
 			end
 
 			STATE_CTRL_AR: begin
 				s_axi_ctrl_arvalid = 1;
-				if(s_axi_ctrl_ar_fire) begin
-					state_next = STATE_CTRL_R;
-				end
 			end
 
 			STATE_CTRL_R: begin
 				s_axi_ctrl_rready = 1;
-				if(s_axi_ctrl_r_fire) begin
-					ctrl_rx_data_int = s_axi_ctrl_rdata;
-					state_next = STATE_TX_DW1_0;
-				end
 			end
 
 			STATE_TX_DW1_0: begin
@@ -262,16 +292,13 @@ module tlp_reg #(
 				};
 				s_axis_cc_tkeep = 8'hFF;
 				s_axis_cc_tvalid = 1;
-				if(s_axis_cc_fire) begin
-					state_next = STATE_TX_DW3_2;
-				end
 			end
 
 			STATE_TX_DW3_2: begin
 				s_axis_cc_tlast = 1;
                 s_axis_cc_tdata = {      // Bits
                 	// DW3
-					{pci_rd32_data},         // 32
+					{pci_rd32_data},     // 32
                 	// DW2
 					tlp_hdr_rid,         // 16
 					tlp_hdr_tag,         //  8
@@ -280,23 +307,37 @@ module tlp_reg #(
 				};
 				s_axis_cc_tkeep = 8'hFF;
 				s_axis_cc_tvalid = 1;
-				if(s_axis_cc_fire) begin
-					state_next = STATE_RX_DW3_2;
-				end
 			end
 		endcase
 	end
 
+	// tlp_hdr_dw3_2
 	always @(posedge clk or negedge rst_n) begin
 		if(~rst_n) begin
-			state_reg <= STATE_IDLE;
 			tlp_hdr_dw3_2 <= 0;
-			ctrl_rx_data <= 0;
 		end else begin
-			state_reg <= state_next;
-			tlp_hdr_dw3_2 <= tlp_hdr_dw3_2_int;
-			ctrl_rx_data <= ctrl_rx_data_int;
+			case(state_reg)
+				STATE_RX_DW3_2: begin
+					if(m_axis_cq_fire) begin
+						tlp_hdr_dw3_2 <= m_axis_cq_tdata;
+					end
+				end
+			endcase
 		end
 	end
 
+	// ctrl_rx_data
+	always @(posedge clk or negedge rst_n) begin
+		if(~rst_n) begin
+			ctrl_rx_data <= 0;
+		end else begin
+			case(state_reg)
+				STATE_CTRL_R: begin
+					if(s_axi_ctrl_r_fire) begin
+						ctrl_rx_data <= s_axi_ctrl_rdata;
+					end
+				end
+			endcase
+		end
+	end
 endmodule
