@@ -95,7 +95,6 @@ module tlp_demuxer #(
 
 	wire [4:0] tlp_hdr_type;
 
-	assign m_axis_rx_fire = m_axis_rx_tready && m_axis_rx_tvalid;
 	assign tlp_hdr_type = m_axis_rx_tdata[28:24];
 
 	assign s_axis_cq_tdata = m_axis_rx_tdata;
@@ -129,7 +128,7 @@ module tlp_demuxer #(
 		end
 	endgenerate
 
-	// state_reg
+	// @FF state_reg
 	always @(posedge clk or negedge rst_n) begin
 		if(~rst_n) begin
 			state_reg <= STATE_IDLE;
@@ -183,7 +182,7 @@ module tlp_demuxer #(
 		end
 	end
 
-	// m_axis_rx_tready
+	// @COMB m_axis_rx_tready
 	always @(*) begin
 		m_axis_rx_tready = 0;
 
@@ -206,7 +205,9 @@ module tlp_demuxer #(
 		endcase
 	end
 
-	// tlp_hdr_dw1_0, s_idx, rx_tdata, rx_tlast, rx_tlast, rx_tuser
+	assign m_axis_rx_fire = m_axis_rx_tready && m_axis_rx_tvalid;
+
+	// @FF tlp_hdr_dw1_0, @FF s_idx, @FF rx_tdata, @FF rx_tlast, @FF rx_tlast, @FF rx_tuser
 	always @(posedge clk or negedge rst_n) begin
 		if(~rst_n) begin
 			tlp_hdr_dw1_0 <= 0;
