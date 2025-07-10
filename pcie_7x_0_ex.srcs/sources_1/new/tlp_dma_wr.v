@@ -95,7 +95,7 @@ module tlp_dma_wr #(
 	localparam STATE_DMA_WR_DW1_0    = 3'd2;
 	localparam STATE_DMA_WR_DW3_2    = 3'd3;
 	localparam STATE_DMA_WR          = 3'd4;
-	localparam STATE_DMA_WR_DONE     = 3'd5;
+	localparam STATE_DMA_WR_NEXT     = 3'd5;
 	localparam STATE_BITS            = 3;
 
 	localparam SRC_COUNT     = 2;
@@ -277,7 +277,7 @@ module tlp_dma_wr #(
 			case(ap_state)
 				STATE_IDLE:
 					if(ap_start) begin
-						ap_state <= STATE_DMA_WR_DONE;
+						ap_state <= STATE_DMA_WR_NEXT;
 					end
 
 				STATE_DMA_WR_DW1_0:
@@ -291,7 +291,7 @@ module tlp_dma_wr #(
 
 						if(buf_addr_32bit) begin
 							if(s_axis_rr_tlast) begin
-								ap_state <= STATE_DMA_WR_DONE;
+								ap_state <= STATE_DMA_WR_NEXT;
 
 								if(size_next == 0 && times_int == 1)
 									ap_state <= STATE_FINISH;
@@ -303,7 +303,7 @@ module tlp_dma_wr #(
 				STATE_DMA_WR: begin
 					if(s_axis_rr_fire) begin
 						if(s_axis_rr_tlast) begin
-							ap_state <= STATE_DMA_WR_DONE;
+							ap_state <= STATE_DMA_WR_NEXT;
 
 							if(size_next == 0 && times_int == 1)
 								ap_state <= STATE_FINISH;
@@ -311,7 +311,7 @@ module tlp_dma_wr #(
 					end
 				end
 
-				STATE_DMA_WR_DONE: begin
+				STATE_DMA_WR_NEXT: begin
 					ap_state <= STATE_DMA_WR_DW1_0;
 				end
 
@@ -381,7 +381,7 @@ module tlp_dma_wr #(
 					end
 				end
 
-				STATE_DMA_WR_DONE: begin
+				STATE_DMA_WR_NEXT: begin
 					if(size_int > BURST_SIZE) begin
 						buf_addr_adder_inc <= BURST_SIZE;
 						size_next <= size_int - BURST_SIZE;
