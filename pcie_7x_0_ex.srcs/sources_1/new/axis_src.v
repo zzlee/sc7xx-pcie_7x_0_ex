@@ -48,45 +48,46 @@ module axis_src #(
 	localparam STATE_FINISH = 2'd2;
 	localparam STATE_BITS   = 2;
 
+	localparam GEN_DATA_WIDTH = 8;
+
+	genvar i;
+
 	wire t_fire;
 
-	reg [STATE_BITS-1:0]    state_reg;
-	reg [7:0]               data_seed_reg;
-	wire [C_DATA_WIDTH-1:0] generated_data;
+	reg [STATE_BITS-1:0]     ap_state;
+	reg [GEN_DATA_WIDTH-1:0] data_seed_int;
+	wire [C_DATA_WIDTH-1:0]  gen_data;
 
-	assign ap_idle = (state_reg == STATE_IDLE);
-	assign ap_done = (state_reg == STATE_FINISH);
+	assign ap_idle = (ap_state == STATE_IDLE);
+	assign ap_done = (ap_state == STATE_FINISH);
 	assign ap_ready = 0;
 
-	// generated data
 	generate
-		genvar i;
-
-		for (i = 0; i < C_DATA_WIDTH / 8; i = i + 1) begin
-			assign generated_data[8*(i+1)-1:8*i] = data_seed_reg + i;
+		for (i = 0; i < C_DATA_WIDTH / GEN_DATA_WIDTH; i = i + 1) begin
+			assign gen_data[GEN_DATA_WIDTH*i +: GEN_DATA_WIDTH] = data_seed_int + i;
 		end
 	endgenerate
 
 	assign t_fire = m_axis_tvalid && m_axis_tready;
 
 	assign m_axis_tkeep = {(KEEP_WIDTH){1'b1}};
-	assign m_axis_tdata = generated_data;
+	assign m_axis_tdata = gen_data;
 	assign m_axis_tlast = 0;
-	assign m_axis_tvalid = (state_reg == STATE_START);
+	assign m_axis_tvalid = (ap_state == STATE_START);
 
 	always @(posedge clk or negedge rst_n) begin
 		if(~rst_n) begin
-			state_reg <= STATE_IDLE;
+			ap_state <= STATE_IDLE;
 		end else begin
-			case(state_reg)
+			case(ap_state)
 				STATE_IDLE: begin
 					if(ap_start) begin
-						state_reg <= STATE_START;
+						ap_state <= STATE_START;
 					end
 				end
 
 				STATE_FINISH: begin
-					state_reg <= STATE_IDLE;
+					ap_state <= STATE_IDLE;
 				end
 			endcase
 		end
@@ -94,13 +95,13 @@ module axis_src #(
 
 	always @(posedge clk or negedge rst_n) begin
 		if(~rst_n) begin
-			data_seed_reg <= 0;
+			data_seed_int <= 0;
 			m_axis_tuser <= 1;
 		end else begin
-			case(state_reg)
+			case(ap_state)
 				STATE_START: begin
 					if(t_fire) begin
-						data_seed_reg <= data_seed_reg + 1;
+						data_seed_int <= data_seed_int + C_DATA_WIDTH / GEN_DATA_WIDTH;
 						m_axis_tuser <= 0;
 					end
 				end
@@ -109,7 +110,7 @@ module axis_src #(
 	end
 
 	always @(*) begin
-		case(state_reg)
+		case(ap_state)
 			STATE_START: begin
 				if(t_fire) begin
 					$display("t_fire: data='h%X keep='h%X last=%d user=%d",

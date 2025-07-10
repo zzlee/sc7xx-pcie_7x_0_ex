@@ -114,16 +114,17 @@ module tlp_dma_rd #(
 	genvar gen_i;
 	integer rc_i;
 
-	reg [STATE_BITS-1:0]   state_reg;
-	reg [63:0]             buf_addr_int, buf_addr_next;
-	reg                    buf_addr_next_carry;
+	reg [STATE_BITS-1:0]   ap_state;
+	reg [63:0]             buf_addr_int;
+	wire [63:0]            buf_addr_next;
+	reg [SIZE_WIDTH-1:0]   buf_addr_adder_inc;
+	reg                    buf_addr_32bit;
+	wire [31:0]            buf_addr_lo;
+	wire [31:0]            buf_addr_hi;
 	reg [SIZE_WIDTH-1:0]   size_int, size_next;
 	reg [TIMES_WIDTH-1:0]  times_int;
 	reg [BURST_WIDTH-1:0]  burst_bytes_int;
 	wire [31:0]            size_4x;
-	wire                   buf_addr_32bit;
-	wire [31:0]            buf_addr_lo;
-	wire [31:0]            buf_addr_hi;
 	reg [C_DATA_WIDTH-1:0] rc_tdata;
 	reg [KEEP_WIDTH-1:0]   rc_tkeep;
 	reg                    rc_tlast;
@@ -154,7 +155,7 @@ module tlp_dma_rd #(
 	wire [3:0] tlp_hdr_first_be;
 
 	// rc signals
-	reg [RC_STATE_BITS-1:0] rc_state_reg [RC_COUNT-1:0];
+	reg [RC_STATE_BITS-1:0] rc_state [RC_COUNT-1:0];
 	reg                     rc_req [RC_COUNT-1:0];
 	reg [RC_COUNT-1:0]      rc_avail;
 	reg [RC_CNT_WIDTH-1:0]  rc_cur_idx;
@@ -189,16 +190,25 @@ module tlp_dma_rd #(
 	reg                    s00_selected_rc_valid;
 
 	// m00 signals
-	reg [M_STATE_BITS-1:0] m00_state_reg;
+	reg [M_STATE_BITS-1:0] m00_state;
 
-	assign ap_idle = (state_reg == STATE_IDLE);
-	assign ap_done = (state_reg == STATE_FINISH);
+	assign ap_idle = (ap_state == STATE_IDLE);
+	assign ap_done = (ap_state == STATE_FINISH);
 	assign ap_ready = ap_done;
 
 	assign size_4x = (size & ~32'b11);
-	assign buf_addr_32bit = (buf_addr[63:32] == 32'b0);
 	assign buf_addr_lo = {buf_addr_int[31:2], 2'b00};
 	assign buf_addr_hi = buf_addr_int[63:32];
+
+	buf_addr_adder #(
+		.C_INC_WIDTH(SIZE_WIDTH)
+	) buf_addr_adder_U (
+		.clk(clk),
+		.rst_n(rst_n),
+		.buf_addr(buf_addr_int),
+		.inc(buf_addr_adder_inc),
+		.buf_addr_next(buf_addr_next)
+	);
 
 	assign m00_axis_rc_fire = m00_axis_rc_tready && m00_axis_rc_tvalid;
 	assign s_axis_rr_tuser[0] = 1'b0; // Unused for V6
@@ -234,65 +244,65 @@ module tlp_dma_rd #(
 	assign tlp_hdr_last_be = (burst_bytes_int == 4 ? 4'b0000 : 4'b1111);
 	assign tlp_hdr_first_be = 4'b1111;
 
-	// state_reg
+	// @FF ap_state
 	always @(posedge clk or negedge rst_n) begin
 		if(~rst_n) begin
-			state_reg <= STATE_IDLE;
+			ap_state <= STATE_IDLE;
 		end else begin
-			case(state_reg)
+			case(ap_state)
 				STATE_IDLE:
 					if(ap_start) begin
-						state_reg <= STATE_DMA_RD_NEXT;
+						ap_state <= STATE_DMA_RD_NEXT;
 					end
 
 				STATE_DMA_RD_DW1_0:
 					if(rc_avail[rc_cur_idx]) begin
 						if(s_axis_rr_fire) begin
-							state_reg <= buf_addr_32bit ? STATE_DMA_RD32_DW3_2 : STATE_DMA_RD64_DW3_2;
+							ap_state <= buf_addr_32bit ? STATE_DMA_RD32_DW3_2 : STATE_DMA_RD64_DW3_2;
 						end
 					end
 
 				STATE_DMA_RD32_DW3_2:
 					if(s_axis_rr_fire) begin
-						state_reg <= STATE_DMA_RD;
+						ap_state <= STATE_DMA_RD;
 					end
 
 				STATE_DMA_RD64_DW3_2:
 					if(s_axis_rr_fire) begin
-						state_reg <= STATE_DMA_RD;
+						ap_state <= STATE_DMA_RD;
 					end
 
 				STATE_DMA_RD:
 					if(size_next == 0 && times_int == 1) begin
-						state_reg <= STATE_WAIT_PENDING;
+						ap_state <= STATE_WAIT_PENDING;
 					end else begin
-						state_reg <= STATE_DMA_RD_NEXT;
+						ap_state <= STATE_DMA_RD_NEXT;
 					end
 
 				STATE_DMA_RD_NEXT: begin
-					state_reg <= STATE_DMA_RD_DW1_0;
+					ap_state <= STATE_DMA_RD_DW1_0;
 				end
 
 				STATE_WAIT_PENDING:
 					if(&rc_avail) begin
-						state_reg <= STATE_FINISH;
+						ap_state <= STATE_FINISH;
 					end
 
 				STATE_FINISH: begin
-					state_reg <= STATE_IDLE;
+					ap_state <= STATE_IDLE;
 				end
 			endcase
 		end
 	end
 
-	// s_axis_rr_tdata, s_axis_rr_tkeep, s_axis_rr_tlast, s_axis_rr_tvalid
+	// @COMB s_axis_rr_tdata, @COMB s_axis_rr_tkeep, @COMB s_axis_rr_tlast, @COMB s_axis_rr_tvalid
 	always @(*) begin
 		s_axis_rr_tdata = 'hEEFFAABBCAFECAFE; // for debug purpose
 		s_axis_rr_tkeep = 0;
 		s_axis_rr_tlast = 0;
 		s_axis_rr_tvalid = 0;
 
-		case(state_reg)
+		case(ap_state)
 			STATE_DMA_RD_DW1_0:
 				if(rc_avail[rc_cur_idx]) begin
 					s_axis_rr_tlast = 0;
@@ -344,29 +354,26 @@ module tlp_dma_rd #(
 		endcase
 	end
 
-	// buf_addr_int, buf_addr_next, buf_addr_next_carry, size_int, size_next, times_int, burst_bytes_int, rc_cur_idx
+	// @FF buf_addr_int, @FF buf_addr_32bit, @FF buf_addr_adder_inc, @FF size_int, @FF size_next, @FF times_int, @FF burst_bytes_int, @FF rc_cur_idx
 	always @(posedge clk or negedge rst_n) begin
 		if(~rst_n) begin
 			buf_addr_int <= 0;
-			buf_addr_next <= 0;
-			buf_addr_next_carry <= 0;
+			buf_addr_32bit <= 0;
+			buf_addr_adder_inc <= 0;
 			size_int <= 0;
 			size_next <= 0;
 			times_int <= 0;
 			burst_bytes_int <= 0;
 			rc_cur_idx <= RC_COUNT - 1;
 		end else begin
-			case(state_reg)
+			case(ap_state)
 				STATE_IDLE:
 					if(ap_start) begin
 						buf_addr_int <= buf_addr;
+						buf_addr_32bit <= (buf_addr[63:32] == 32'b0);
 						size_int <= size_4x;
 						times_int <= times;
 					end
-
-				STATE_DMA_RD_DW1_0: begin
-					buf_addr_next[63:32] <= buf_addr_int[63:32] + buf_addr_next_carry;
-				end
 
 				STATE_DMA_RD: begin
 					buf_addr_int <= buf_addr_next;
@@ -384,11 +391,11 @@ module tlp_dma_rd #(
 					rc_cur_idx <= (rc_cur_idx == RC_COUNT - 1) ? 0 : rc_cur_idx + 1;
 
 					if(size_int > BURST_SIZE) begin
-						{buf_addr_next_carry, buf_addr_next[31:0]} <= buf_addr_int[31:0] + BURST_SIZE;
+						buf_addr_adder_inc <= BURST_SIZE;
 						size_next <= size_int - BURST_SIZE;
 						burst_bytes_int <= BURST_SIZE;
 					end else begin
-						{buf_addr_next_carry, buf_addr_next[31:0]} <= buf_addr_int[31:0] + size_int;
+						buf_addr_adder_inc <= size_int;
 						size_next <= 0;
 						burst_bytes_int <= size_int;
 					end
@@ -409,12 +416,12 @@ module tlp_dma_rd #(
 		.valid(rc_idx_fifo_data_valid)
 	);
 
-	// rc_idx_fifo_wr_en, rc_idx_fifo_wr_data
+	// @COMB rc_idx_fifo_wr_en, @COMB rc_idx_fifo_wr_data
 	always @(*) begin
 		rc_idx_fifo_wr_en = 0;
 		rc_idx_fifo_wr_data = 0;
 
-		case(state_reg)
+		case(ap_state)
 			STATE_DMA_RD_DW1_0: begin
 				rc_idx_fifo_wr_en = rc_avail[rc_cur_idx] && s_axis_rr_fire;
 				rc_idx_fifo_wr_data = rc_cur_idx;
@@ -422,7 +429,7 @@ module tlp_dma_rd #(
 		endcase
 	end
 
-	// rc_idx_fifo_rd_en
+	// @COMB rc_idx_fifo_rd_en
 	always @(*) begin
 		rc_idx_fifo_rd_en = 0;
 
@@ -431,7 +438,7 @@ module tlp_dma_rd #(
 		end
 	end
 
-	// s00_selected_rc_idx, s00_selected_rc_valid
+	// @FF s00_selected_rc_idx, @FF s00_selected_rc_valid
 	always @(posedge clk or negedge rst_n) begin
 		if(~rst_n) begin
 			s00_selected_rc_idx <= 0;
@@ -472,37 +479,37 @@ module tlp_dma_rd #(
 
 	generate
 		for(gen_i = 0;gen_i < RC_COUNT;gen_i = gen_i + 1) begin
-			// rc_state_reg[gen_i]
+			// @FF rc_state[gen_i]
 			always @(posedge clk or negedge rst_n) begin
 				if(~rst_n) begin
-					rc_state_reg[gen_i] <= RC_STATE_IDLE;
+					rc_state[gen_i] <= RC_STATE_IDLE;
 				end else begin
-					case(rc_state_reg[gen_i])
+					case(rc_state[gen_i])
 						RC_STATE_IDLE:
 							if(rc_req[gen_i]) begin
-								rc_state_reg[gen_i] <= RC_STATE_MATCH_IDX;
+								rc_state[gen_i] <= RC_STATE_MATCH_IDX;
 							end
 
 						RC_STATE_MATCH_IDX:
 							if(rc_idx_fifo_data_valid && rc_idx_fifo_rd_data == gen_i) begin
-								rc_state_reg[gen_i] <= RC_STATE_DMA_RD;
+								rc_state[gen_i] <= RC_STATE_DMA_RD;
 							end
 
 						RC_STATE_DMA_RD: begin
 							if(rc_fifo_rd_last[gen_i] && rc_fifo_rd_eos[gen_i]) begin
-								rc_state_reg[gen_i] <= RC_STATE_IDLE;
+								rc_state[gen_i] <= RC_STATE_IDLE;
 							end
 						end
 					endcase
 				end
 			end
 
-			// rc_avail[gen_i]
+			// @FF rc_avail[gen_i]
 			always @(posedge clk or negedge rst_n) begin
 				if(~rst_n) begin
 					rc_avail[gen_i] <= 1;
 				end else begin
-					case(rc_state_reg[gen_i])
+					case(rc_state[gen_i])
 						RC_STATE_IDLE:
 							if(rc_req[gen_i]) begin
 								rc_avail[gen_i] <= 0;
@@ -517,12 +524,12 @@ module tlp_dma_rd #(
 				end
 			end
 
-			// rc_req[gen_i]
+			// @FF rc_req[gen_i]
 			always @(posedge clk or negedge rst_n) begin
 				if(~rst_n) begin
 					rc_req[gen_i] <= 0;
 				end else begin
-					case(state_reg)
+					case(ap_state)
 						STATE_DMA_RD_DW1_0:
 							if(s_axis_rr_fire && rc_cur_idx == gen_i) begin
 								rc_req[gen_i] <= 1;
@@ -536,19 +543,19 @@ module tlp_dma_rd #(
 				end
 			end
 
-			// rc_burst_bytes_int[gen_i]
+			// @FF rc_burst_bytes_int[gen_i]
 			always @(posedge clk or negedge rst_n) begin
 				if(~rst_n) begin
 					rc_burst_bytes_int[gen_i] <= 0;
 				end else begin
-					case(state_reg)
+					case(ap_state)
 						STATE_DMA_RD_DW1_0:
 							if(s_axis_rr_fire && rc_cur_idx == gen_i) begin
 								rc_burst_bytes_int[gen_i] <= burst_bytes_int;
 							end
 					endcase
 
-					case(rc_state_reg[gen_i])
+					case(rc_state[gen_i])
 						RC_STATE_DMA_RD: begin
 							if(rc_fifo_rd_last[gen_i]) begin
 								rc_burst_bytes_int[gen_i] <= rc_burst_bytes_int[gen_i] - req_len_int;
@@ -560,24 +567,24 @@ module tlp_dma_rd #(
 		end
 	endgenerate
 
-	// m00_state_reg
+	// @FF m00_state
 	always @(posedge clk or negedge rst_n) begin
 		if(~rst_n) begin
-			m00_state_reg <= M_STATE_IDLE;
+			m00_state <= M_STATE_IDLE;
 		end else begin
-			case(m00_state_reg)
+			case(m00_state)
 				M_STATE_IDLE: begin
 					if(ap_start) begin
-						m00_state_reg <= M_STATE_TLP_DW3_2;
+						m00_state <= M_STATE_TLP_DW3_2;
 					end
 				end
 
 				M_STATE_TLP_DW3_2: begin
 					if(m00_axis_rc_fire) begin
-						m00_state_reg <= M_STATE_DMA_RD;
+						m00_state <= M_STATE_DMA_RD;
 
 						if(m00_axis_rc_tlast) begin
-							m00_state_reg <= M_STATE_DMA_RD_LAST;
+							m00_state <= M_STATE_DMA_RD_LAST;
 						end
 					end
 				end
@@ -585,24 +592,24 @@ module tlp_dma_rd #(
 				M_STATE_DMA_RD:
 					if(! rc_fifo_full[s_idx]) begin
 						if(m00_axis_rc_fire) begin
-							m00_state_reg <= M_STATE_DMA_RD;
+							m00_state <= M_STATE_DMA_RD;
 
 							if(m00_axis_rc_tlast) begin
-								m00_state_reg <= M_STATE_DMA_RD_LAST;
+								m00_state <= M_STATE_DMA_RD_LAST;
 							end
 						end
 					end
 
 				M_STATE_DMA_RD_LAST:
 					if(! rc_fifo_full[s_idx]) begin
-						m00_state_reg <= M_STATE_TLP_DW3_2;
+						m00_state <= M_STATE_TLP_DW3_2;
 
 						// back-to-back
 						if(m00_axis_rc_fire) begin
-							m00_state_reg <= M_STATE_DMA_RD;
+							m00_state <= M_STATE_DMA_RD;
 
 							if(m00_axis_rc_tlast) begin
-								m00_state_reg <= M_STATE_DMA_RD_LAST;
+								m00_state <= M_STATE_DMA_RD_LAST;
 							end
 						end
 					end
@@ -610,11 +617,11 @@ module tlp_dma_rd #(
 		end
 	end
 
-	// m00_axis_rc_tready
+	// @COMB m00_axis_rc_tready
 	always @(*) begin
 		m00_axis_rc_tready = 0;
 
-		case(m00_state_reg)
+		case(m00_state)
 			M_STATE_TLP_DW3_2: begin
 				m00_axis_rc_tready = 1;
 			end
@@ -634,12 +641,12 @@ module tlp_dma_rd #(
 		endcase
 	end
 
-	// req_len_int
+	// @FF req_len_int
 	always @(posedge clk or negedge rst_n) begin
 		if(~rst_n) begin
 			req_len_int <= 0;
 		end else begin
-			case(m00_state_reg)
+			case(m00_state)
 				M_STATE_TLP_DW3_2: begin
 					req_len_int <= (rx_tlp_hdr_len << 2);
 				end
@@ -647,7 +654,7 @@ module tlp_dma_rd #(
 		end
 	end
 
-	// s_idx, rc_tdata, rc_tkeep, rc_tlast
+	// @FF s_idx, @FF rc_tdata, @FF rc_tkeep, @FF rc_tlast
 	always @(posedge clk or negedge rst_n) begin
 		if(~rst_n) begin
 			s_idx <= 0;
@@ -655,10 +662,10 @@ module tlp_dma_rd #(
 			rc_tkeep <= 0;
 			rc_tlast <= 0;
 		end else begin
-			case(m00_state_reg)
+			case(m00_state)
 				M_STATE_TLP_DW3_2:
 					if(m00_axis_rc_fire) begin
-						s_idx <= m00_axis_rc_tdata[8+RC_CNT_WIDTH-1:8];
+						s_idx <= m00_axis_rc_tdata[8 +: RC_CNT_WIDTH];
 						rc_tdata <= m00_axis_rc_tdata;
 						rc_tkeep <= m00_axis_rc_tkeep;
 						rc_tlast <= m00_axis_rc_tlast;
@@ -674,7 +681,7 @@ module tlp_dma_rd #(
 				M_STATE_DMA_RD_LAST:
 					// back-to-back
 					if(m00_axis_rc_fire) begin
-						s_idx <= m00_axis_rc_tdata[8+RC_CNT_WIDTH-1:8];
+						s_idx <= m00_axis_rc_tdata[8 +: RC_CNT_WIDTH];
 						rc_tdata <= m00_axis_rc_tdata;
 						rc_tkeep <= m00_axis_rc_tkeep;
 						rc_tlast <= m00_axis_rc_tlast;
@@ -686,7 +693,7 @@ module tlp_dma_rd #(
 	assign s00_axis_tuser = 0; // TODO: SOF?
 	assign s00_axis_tlast = 0; // TODO: EOL?
 
-	// s00_axis_tdata, s00_axis_tkeep, s00_axis_tvalid
+	// @COMB s00_axis_tdata, @COMB s00_axis_tkeep, @COMB s00_axis_tvalid
 	always @(*) begin
 		s00_axis_tdata = 0;
 		s00_axis_tkeep = 0;
@@ -699,14 +706,14 @@ module tlp_dma_rd #(
 		end
 	end
 
-	// rc_fifo_wr_en[rc_i], rc_fifo_wr_data[rc_i]
+	// @COMB rc_fifo_wr_en[rc_i], @COMB rc_fifo_wr_data[rc_i]
 	always @(*) begin
 		for(rc_i = 0;rc_i < RC_COUNT;rc_i = rc_i + 1) begin
 			rc_fifo_wr_en[rc_i] = 0;
 			rc_fifo_wr_data[rc_i] = 0;
 		end
 
-		case(m00_state_reg)
+		case(m00_state)
 			M_STATE_DMA_RD:
 				if(! rc_fifo_full[s_idx]) begin
 					rc_fifo_wr_data[s_idx] = {
@@ -725,13 +732,13 @@ module tlp_dma_rd #(
 		endcase
 	end
 
-	// rc_fifo_rd_en[gen_i]
+	// @COMB rc_fifo_rd_en[gen_i]
 	generate
 		for(gen_i = 0;gen_i < RC_COUNT;gen_i = gen_i + 1) begin
 			always @(*) begin
 				rc_fifo_rd_en[gen_i] = 0;
 
-				case(rc_state_reg[gen_i])
+				case(rc_state[gen_i])
 					RC_STATE_DMA_RD: begin
 						rc_fifo_rd_en[gen_i] = s00_axis_fire;
 					end

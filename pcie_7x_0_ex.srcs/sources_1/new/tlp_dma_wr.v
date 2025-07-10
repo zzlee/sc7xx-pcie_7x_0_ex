@@ -1,22 +1,22 @@
 `timescale 1ns / 1ps
 //////////////////////////////////////////////////////////////////////////////////
-// Company: 
-// Engineer: 
-// 
+// Company:
+// Engineer:
+//
 // Create Date: 06/21/2025 04:36:29 PM
-// Design Name: 
+// Design Name:
 // Module Name: tlp_dma_wr
-// Project Name: 
-// Target Devices: 
-// Tool Versions: 
-// Description: 
-// 
-// Dependencies: 
-// 
+// Project Name:
+// Target Devices:
+// Tool Versions:
+// Description:
+//
+// Dependencies:
+//
 // Revision:
 // Revision 0.01 - File Created
 // Additional Comments:
-// 
+//
 //////////////////////////////////////////////////////////////////////////////////
 
 module tlp_dma_wr #(
@@ -90,14 +90,16 @@ module tlp_dma_wr #(
 	localparam MAX_TIMES   = 4320;
 	localparam TIMES_WIDTH = $clog2(MAX_TIMES + 1);
 
-	localparam STATE_IDLE            = 4'd0;
-	localparam STATE_FINISH          = 4'd1;
-	localparam STATE_DMA_WR_DW1_0    = 4'd2;
-	localparam STATE_DMA_WR32_DW3_2  = 4'd3;
-	localparam STATE_DMA_WR64_DW3_2  = 4'd4;
-	localparam STATE_DMA_WR          = 4'd5;
-	localparam STATE_DMA_WR_DONE     = 4'd6;
-	localparam STATE_BITS            = 4;
+	localparam STATE_IDLE            = 3'd0;
+	localparam STATE_FINISH          = 3'd1;
+	localparam STATE_DMA_WR_DW1_0    = 3'd2;
+	localparam STATE_DMA_WR_DW3_2    = 3'd3;
+	localparam STATE_DMA_WR          = 3'd4;
+	localparam STATE_DMA_WR_DONE     = 3'd5;
+	localparam STATE_BITS            = 3;
+
+	localparam SRC_COUNT     = 2;
+	localparam SRC_CNT_WIDTH = $clog2(SRC_COUNT);
 
 	localparam SRC_STATE_IDLE   = 3'd0;
 	localparam SRC_STATE_FINISH = 3'd1;
@@ -105,13 +107,21 @@ module tlp_dma_wr #(
 	localparam SRC_STATE_RX_DW1 = 3'd3;
 	localparam SRC_STATE_BITS   = 3;
 
-	reg [STATE_BITS-1:0]  state_reg;
-	reg [63:0]            buf_addr_int, buf_addr_next;
-	reg                   buf_addr_next_carry;
-	reg [SIZE_WIDTH-1:0]  size_int, size_next;
-	reg [TIMES_WIDTH-1:0] times_int;
-	reg [BURST_WIDTH-1:0] burst_bytes_int;
-	reg                   src_selector; // m00, m01
+	genvar gen_i;
+	integer i;
+
+	reg [STATE_BITS-1:0]    ap_state;
+	reg [63:0]              buf_addr_int;
+	wire [63:0]             buf_addr_next;
+	reg [SIZE_WIDTH-1:0]    buf_addr_adder_inc;
+	reg                     buf_addr_32bit;
+	reg [SIZE_WIDTH-1:0]    size_int, size_next;
+	reg [TIMES_WIDTH-1:0]   times_int;
+	reg [BURST_WIDTH-1:0]   burst_bytes_int;
+	reg [SRC_CNT_WIDTH-1:0] src_sel;
+	wire [31:0]             size_4x;
+	wire [31:0]             buf_addr_lo;
+	wire [31:0]             buf_addr_hi;
 
 	wire s_axis_rr_fire;
 
@@ -136,58 +146,34 @@ module tlp_dma_wr #(
 	wire [1:0] tlp_hdr_attr;
 	wire [9:0] tlp_hdr_len;
 
-	wire [31:0] size_4x;
-	wire [31:0] buf_addr_lo;
-	wire [31:0] buf_addr_hi;
-	wire        buf_addr_32bit;
-	wire [63:0] pci_wr32_addr_m00;
-	wire [63:0] pci_wr32_addr_m01;
-	wire [63:0] pci_wr64_addr;
+	wire [C_SRC_DATA_WIDTH-1:0] m_axis_tdata [SRC_COUNT-1:0];
+	reg                         m_axis_tready [SRC_COUNT-1:0];
+	wire                        m_axis_tvalid [SRC_COUNT-1:0];
+	wire                        m_axis_fire [SRC_COUNT-1:0];
 
-	wire m00_axis_fire;
-	wire m01_axis_fire;
+	// m_fifo_U[SRC_COUNT]
+	reg [SRC_STATE_BITS-1:0]   m_state [SRC_COUNT-1:0];
+	reg [C_SRC_DATA_WIDTH-1:0] m_dw0 [SRC_COUNT-1:0];
+	reg                        m_fifo_wr_en [SRC_COUNT-1:0];
+	wire [C_DATA_WIDTH-1:0]    m_fifo_wr_data [SRC_COUNT-1:0];
+	reg                        m_fifo_rd_en [SRC_COUNT-1:0];
+	wire [C_DATA_WIDTH-1:0]    m_fifo_rd_data [SRC_COUNT-1:0];
+	wire                       m_fifo_data_valid [SRC_COUNT-1:0];
+	wire                       m_fifo_full [SRC_COUNT-1:0];
 
-	// m00_fifo_U
-	reg [SRC_STATE_BITS-1:0]   m00_state;
-	reg [C_SRC_DATA_WIDTH-1:0] m00_dw0;
-	wire                       m00_fifo_wr_en;
-	wire [C_DATA_WIDTH-1:0]    m00_fifo_wr_data;
-	reg                        m00_fifo_rd_en;
-	wire [C_DATA_WIDTH-1:0]    m00_fifo_rd_data;
-	wire                       m00_fifo_data_valid;
-	wire                       m00_fifo_full;
-
-	// m00_fifo_U
-	reg [SRC_STATE_BITS-1:0]   m01_state;
-	reg [C_SRC_DATA_WIDTH-1:0] m01_dw0;
-	wire                       m01_fifo_wr_en;
-	wire [C_DATA_WIDTH-1:0]    m01_fifo_wr_data;
-	reg                        m01_fifo_rd_en;
-	wire [C_DATA_WIDTH-1:0]    m01_fifo_rd_data;
-	wire                       m01_fifo_data_valid;
-	wire                       m01_fifo_full;
-
-	assign ap_idle = (state_reg == STATE_IDLE);
-	assign ap_done = (state_reg == STATE_FINISH);
+	assign ap_idle = (ap_state == STATE_IDLE);
+	assign ap_done = (ap_state == STATE_FINISH);
 	assign ap_ready = ap_done;
 
-	assign s_axis_rr_tuser[0] = 1'b0; // Unused for V6
-	assign s_axis_rr_tuser[1] = 1'b0; // Error forward packet
-	assign s_axis_rr_tuser[2] = 1'b0; // Stream packet
-	assign s_axis_rr_tuser[3] = 1'b0; // Unused discontinue
 	assign m_axis_rc_tready = 1'b0; // Never receive RC
 
-	assign s_axis_rr_fire = s_axis_rr_tready && s_axis_rr_tvalid;
+	assign m_axis_tdata[0] = m00_axis_tdata;
+	assign m00_axis_tready = m_axis_tready[0];
+	assign m_axis_tvalid[0] = m00_axis_tvalid;
 
-	assign m00_axis_tready = ((m00_state == SRC_STATE_RX_DW0 || m00_state == SRC_STATE_RX_DW1) ? !m00_fifo_full : 0);
-	assign m00_axis_fire = m00_axis_tready && m00_axis_tvalid;
-	assign m00_fifo_wr_en = (m00_state == SRC_STATE_RX_DW1 ? m00_axis_fire : 0);
-	assign m00_fifo_wr_data = { m00_axis_tdata, m00_dw0 };
-
-	assign m01_axis_tready = ((m01_state == SRC_STATE_RX_DW0 || m01_state == SRC_STATE_RX_DW1) ? !m01_fifo_full : 0);
-	assign m01_axis_fire = m01_axis_tready && m01_axis_tvalid;
-	assign m01_fifo_wr_en = (m01_state == SRC_STATE_RX_DW1 ? m01_axis_fire : 0);
-	assign m01_fifo_wr_data = { m01_axis_tdata, m01_dw0 };
+	assign m_axis_tdata[1] = m01_axis_tdata;
+	assign m01_axis_tready = m_axis_tready[1];
+	assign m_axis_tvalid[1] = m01_axis_tvalid;
 
 	assign rx_tlp_hdr_fmt_type = tlp_hdr_dw1_0[30:24];
 	assign rx_tlp_hdr_tc = tlp_hdr_dw1_0[22:20];
@@ -210,200 +196,172 @@ module tlp_dma_wr #(
 	assign tlp_hdr_len = (burst_bytes_int >> 2); // measured by DW unit
 
 	assign size_4x = (size & ~32'b11);
-	assign buf_addr_32bit = (buf_addr[63:32] == 32'b0);
 	assign buf_addr_lo = {buf_addr_int[31:2], 2'b00};
 	assign buf_addr_hi = buf_addr_int[63:32];
 
-	assign pci_wr32_addr_m00 = {
-		// DW3 Data
-		{m00_fifo_rd_data[7:0], m00_fifo_rd_data[15:8], m00_fifo_rd_data[23:16], m00_fifo_rd_data[31:24]},
-		// DW2 Addr
-		buf_addr_lo
-	};
-
-	assign pci_wr32_addr_m01 = {
-		// DW3 Data
-		{m01_fifo_rd_data[7:0], m01_fifo_rd_data[15:8], m01_fifo_rd_data[23:16], m01_fifo_rd_data[31:24]},
-		// DW2 Addr
-		buf_addr_lo
-	};
-
-	assign pci_wr64_addr = {
-		// DW3 Addr LO
-		buf_addr_lo,
-		// DW2 Addr HI
-		buf_addr_hi
-	};
-
-	tlp_dma_wr_m_fifo tlp_dma_wr_m00_fifo_U (
+	buf_addr_adder #(
+		.C_INC_WIDTH(SIZE_WIDTH)
+	) buf_addr_adder_U (
 		.clk(clk),
-		.srst(~rst_n),
-		.wr_en(m00_fifo_wr_en),
-		.din(m00_fifo_wr_data),
-		.rd_en(m00_fifo_rd_en),
-		.dout(m00_fifo_rd_data),
-		.full(m00_fifo_full),
-		.empty(),
-		.valid(m00_fifo_data_valid)
+		.rst_n(rst_n),
+		.buf_addr(buf_addr_int),
+		.inc(buf_addr_adder_inc),
+		.buf_addr_next(buf_addr_next)
 	);
 
-	// m00_state, m00_dw0
-	always @(posedge clk or negedge rst_n) begin
-		if(~rst_n) begin
-			m00_state <= SRC_STATE_IDLE;
-			m00_dw0 <= 0;
-		end else begin
-			case(m00_state)
-				SRC_STATE_IDLE:
-					m00_state <= SRC_STATE_RX_DW0;
+	generate
+		for(gen_i = 0;gen_i < SRC_COUNT;gen_i = gen_i + 1) begin
+			tlp_dma_wr_m_fifo m_fifo_U (
+				.clk(clk),
+				.srst(~rst_n),
+				.wr_en(m_fifo_wr_en[gen_i]),
+				.din(m_fifo_wr_data[gen_i]),
+				.rd_en(m_fifo_rd_en[gen_i]),
+				.dout(m_fifo_rd_data[gen_i]),
+				.full(m_fifo_full[gen_i]),
+				.empty(),
+				.valid(m_fifo_data_valid[gen_i])
+			);
 
-				SRC_STATE_RX_DW0:
-					if(m00_axis_fire) begin
-						m00_dw0 <= m00_axis_tdata;
-						m00_state <= SRC_STATE_RX_DW1;
+			// @FF m_state[gen_i], m_dw0[gen_i]
+			always @(posedge clk or negedge rst_n) begin
+				if(~rst_n) begin
+					m_state[gen_i] <= SRC_STATE_IDLE;
+					m_dw0[gen_i] <= 0;
+				end else begin
+					case(m_state[gen_i])
+						SRC_STATE_IDLE:
+							m_state[gen_i] <= SRC_STATE_RX_DW0;
+
+						SRC_STATE_RX_DW0:
+							if(m_axis_fire[gen_i]) begin
+								m_dw0[gen_i] <= m_axis_tdata[gen_i];
+								m_state[gen_i] <= SRC_STATE_RX_DW1;
+							end
+
+						SRC_STATE_RX_DW1:
+							if(m_axis_fire[gen_i]) begin
+								m_state[gen_i] <= SRC_STATE_RX_DW0;
+							end
+					endcase
+				end
+			end
+
+			// @COMB m_axis_tready[gen_i], @COMB m_fifo_wr_en[gen_i]
+			always @(*) begin
+				m_axis_tready[gen_i] = 0;
+				m_fifo_wr_en[gen_i] = 0;
+
+				case(m_state[gen_i])
+					SRC_STATE_RX_DW0: begin
+						m_axis_tready[gen_i] = 1;
 					end
 
-				SRC_STATE_RX_DW1:
-					if(m00_axis_fire) begin
-						m00_state <= SRC_STATE_RX_DW0;
+					SRC_STATE_RX_DW1: begin
+						m_axis_tready[gen_i] = !m_fifo_full[gen_i];
+						m_fifo_wr_en[gen_i] = m_axis_fire[gen_i];
 					end
-			endcase
+				endcase
+			end
+
+			assign m_fifo_wr_data[gen_i] = { m_axis_tdata[gen_i], m_dw0[gen_i] };
+			assign m_axis_fire[gen_i] = m_axis_tready[gen_i] && m_axis_tvalid[gen_i];
 		end
-	end
+	endgenerate
 
-	tlp_dma_wr_m_fifo tlp_dma_wr_m01_fifo_U (
-		.clk(clk),
-		.srst(~rst_n),
-		.wr_en(m01_fifo_wr_en),
-		.din(m01_fifo_wr_data),
-		.rd_en(m01_fifo_rd_en),
-		.dout(m01_fifo_rd_data),
-		.full(m01_fifo_full),
-		.empty(),
-		.valid(m01_fifo_data_valid)
-	);
-
-	// m01_state, m01_dw0
+	// @FF ap_state
 	always @(posedge clk or negedge rst_n) begin
 		if(~rst_n) begin
-			m01_state <= SRC_STATE_IDLE;
-			m01_dw0 <= 0;
+			ap_state <= STATE_IDLE;
 		end else begin
-			case(m01_state)
-				SRC_STATE_IDLE:
-					m01_state <= SRC_STATE_RX_DW0;
-
-				SRC_STATE_RX_DW0:
-					if(m01_axis_fire) begin
-						m01_dw0 <= m01_axis_tdata;
-						m01_state <= SRC_STATE_RX_DW1;
-					end
-
-				SRC_STATE_RX_DW1:
-					if(m01_axis_fire) begin
-						m01_state <= SRC_STATE_RX_DW0;
-					end
-			endcase
-		end
-	end
-
-	// state_reg
-	always @(posedge clk or negedge rst_n) begin
-		if(~rst_n) begin
-			state_reg <= STATE_IDLE;
-		end else begin
-			case(state_reg)
+			case(ap_state)
 				STATE_IDLE:
 					if(ap_start) begin
-						state_reg <= STATE_DMA_WR_DONE;
+						ap_state <= STATE_DMA_WR_DONE;
 					end
 
 				STATE_DMA_WR_DW1_0:
 					if(s_axis_rr_fire) begin
-						state_reg <= buf_addr_32bit ? STATE_DMA_WR32_DW3_2 : STATE_DMA_WR64_DW3_2;
+						ap_state <= STATE_DMA_WR_DW3_2;
 					end
 
-				STATE_DMA_WR32_DW3_2: begin
+				STATE_DMA_WR_DW3_2: begin
 					if(s_axis_rr_fire) begin
-						state_reg <= STATE_DMA_WR;
+						ap_state <= STATE_DMA_WR;
 
-						if(s_axis_rr_tlast) begin
-							state_reg <= STATE_DMA_WR_DONE;
+						if(buf_addr_32bit) begin
+							if(s_axis_rr_tlast) begin
+								ap_state <= STATE_DMA_WR_DONE;
 
-							if(size_next == 0 && times_int == 1)
-								state_reg <= STATE_FINISH;
+								if(size_next == 0 && times_int == 1)
+									ap_state <= STATE_FINISH;
+							end
 						end
-					end
-				end
-
-				STATE_DMA_WR64_DW3_2: begin
-					if(s_axis_rr_fire) begin
-						state_reg <= STATE_DMA_WR;
 					end
 				end
 
 				STATE_DMA_WR: begin
 					if(s_axis_rr_fire) begin
 						if(s_axis_rr_tlast) begin
-							state_reg <= STATE_DMA_WR_DONE;
+							ap_state <= STATE_DMA_WR_DONE;
 
 							if(size_next == 0 && times_int == 1)
-								state_reg <= STATE_FINISH;
+								ap_state <= STATE_FINISH;
 						end
 					end
 				end
 
 				STATE_DMA_WR_DONE: begin
-					state_reg <= STATE_DMA_WR_DW1_0;
+					ap_state <= STATE_DMA_WR_DW1_0;
 				end
 
 				STATE_FINISH: begin
-					state_reg <= STATE_IDLE;
+					ap_state <= STATE_IDLE;
 				end
 			endcase
 		end
 	end
 
-	// buf_addr_int, buf_addr_next, buf_addr_next_carry, size_int, size_next, times_int, burst_bytes_int, src_selector
+	// @FF buf_addr_int, @FF buf_addr_adder_inc, @FF size_int, @FF size_next, @FF times_int, @FF burst_bytes_int, @FF src_sel
 	always @(posedge clk or negedge rst_n) begin
 		if(~rst_n) begin
 			buf_addr_int <= 0;
-			buf_addr_next <= 0;
-			buf_addr_next_carry <= 0;
+			buf_addr_32bit <= 0;
+			buf_addr_adder_inc <= 0;
 			size_int <= 0;
 			size_next <= 0;
 			times_int <= 0;
 			burst_bytes_int <= 0;
-			src_selector <= 0;
+			src_sel <= 0;
 		end else begin
-			case(state_reg)
+			case(ap_state)
 				STATE_IDLE:
 					if(ap_start) begin
 						buf_addr_int <= buf_addr;
+						buf_addr_32bit <= (buf_addr[63:32] == 32'b0);
 						size_int <= size_4x;
 						times_int <= times;
 					end
 
-				STATE_DMA_WR_DW1_0: begin
-					buf_addr_next[63:32] <= buf_addr_int[63:32] + buf_addr_next_carry;
-				end
+				STATE_DMA_WR_DW3_2: begin
+					if(buf_addr_32bit) begin
+						if(s_axis_rr_fire) begin
+							burst_bytes_int <= burst_bytes_int - 4;
 
-				STATE_DMA_WR32_DW3_2:
-					if(s_axis_rr_fire) begin
-						burst_bytes_int <= burst_bytes_int - 4;
+							if(s_axis_rr_tlast) begin
+								buf_addr_int <= buf_addr_next;
+								size_int <= size_next;
 
-						if(s_axis_rr_tlast) begin
-							buf_addr_int <= buf_addr_next;
-							size_int <= size_next;
+								if(size_next == 0) begin
+									times_int <= times_int - 1;
 
-							if(size_next == 0) begin
-								times_int <= times_int - 1;
-
-								buf_addr_int <= buf_addr;
-								size_int <= size_4x;
+									buf_addr_int <= buf_addr;
+									size_int <= size_4x;
+								end
 							end
 						end
 					end
+				end
 
 				STATE_DMA_WR: begin
 					if(s_axis_rr_fire) begin
@@ -425,35 +383,33 @@ module tlp_dma_wr #(
 
 				STATE_DMA_WR_DONE: begin
 					if(size_int > BURST_SIZE) begin
-						{buf_addr_next_carry, buf_addr_next[31:0]} <= buf_addr_int[31:0] + BURST_SIZE;
+						buf_addr_adder_inc <= BURST_SIZE;
 						size_next <= size_int - BURST_SIZE;
 						burst_bytes_int <= BURST_SIZE;
 					end else begin
-						{buf_addr_next_carry, buf_addr_next[31:0]} <= buf_addr_int[31:0] + size_int;
+						buf_addr_adder_inc <= size_int;
 						size_next <= 0;
 						burst_bytes_int <= size_int;
 					end
 
-					if(src_selector == 0)
-						src_selector <= 1;
-					else if(src_selector == 1)
-						src_selector <= 0;
+					src_sel <= ((src_sel == 0) ? 1 : 0);
 				end
 			endcase
 		end
 	end
 
-	// s_axis_rr_tdata, s_axis_rr_tkeep, s_axis_rr_tlast, s_axis_rr_tvalid, m00_fifo_rd_en, m01_fifo_rd_en
+	// @COMB s_axis_rr_tdata, @COMB s_axis_rr_tkeep, @COMB s_axis_rr_tlast, @COMB s_axis_rr_tvalid, @COMB m_fifo_rd_en[SRC_COUNT]
 	always @(*) begin
 		s_axis_rr_tdata = 'hAABBCCDDCAFECAFE; // for debug purpose
 		s_axis_rr_tkeep = 0;
 		s_axis_rr_tlast = 0;
 		s_axis_rr_tvalid = 0;
 
-		m00_fifo_rd_en = 0;
-		m01_fifo_rd_en = 0;
+		for(i = 0;i < SRC_COUNT;i = i + 1) begin
+			m_fifo_rd_en[i] = 0;
+		end
 
-		case(state_reg)
+		case(ap_state)
 			STATE_DMA_WR_DW1_0: begin
 				s_axis_rr_tlast = 0;
 				s_axis_rr_tdata = {           // Bits
@@ -478,42 +434,46 @@ module tlp_dma_wr #(
 				s_axis_rr_tvalid = 1;
 			end
 
-			STATE_DMA_WR32_DW3_2: begin
-				s_axis_rr_tlast = (burst_bytes_int == 4);
-				s_axis_rr_tkeep = 8'hFF;
+			STATE_DMA_WR_DW3_2: begin
+				if(buf_addr_32bit) begin
+					s_axis_rr_tlast = (burst_bytes_int == 4);
+					s_axis_rr_tkeep = 8'hFF;
 
-				if(src_selector == 0) begin
-					s_axis_rr_tdata = pci_wr32_addr_m00;
-					s_axis_rr_tvalid = m00_fifo_data_valid;
-					m00_fifo_rd_en = s_axis_rr_fire;
-				end else if(src_selector == 1) begin
-					s_axis_rr_tdata = pci_wr32_addr_m01;
-					s_axis_rr_tvalid = m01_fifo_data_valid;
-					m01_fifo_rd_en = s_axis_rr_fire;
+					s_axis_rr_tdata = {
+						// DW3 Data
+						{m_fifo_rd_data[src_sel][7:0], m_fifo_rd_data[src_sel][15:8], m_fifo_rd_data[src_sel][23:16], m_fifo_rd_data[src_sel][31:24]},
+						// DW2 Addr
+						buf_addr_lo
+					};
+					s_axis_rr_tvalid = m_fifo_data_valid[src_sel];
+					m_fifo_rd_en[src_sel] = s_axis_rr_fire;
+				end else begin
+					s_axis_rr_tlast = 0;
+					s_axis_rr_tdata = {
+						// DW3 Addr LO
+						buf_addr_lo,
+						// DW2 Addr HI
+						buf_addr_hi
+					};
+					s_axis_rr_tkeep = 8'hFF;
+					s_axis_rr_tvalid = 1;
 				end
-			end
-
-			STATE_DMA_WR64_DW3_2: begin
-				s_axis_rr_tlast = 0;
-				s_axis_rr_tdata = pci_wr64_addr;
-				s_axis_rr_tkeep = 8'hFF;
-				s_axis_rr_tvalid = 1;
 			end
 
 			STATE_DMA_WR: begin
 				s_axis_rr_tlast = (burst_bytes_int == 4 || burst_bytes_int == 8);
 				s_axis_rr_tkeep = (burst_bytes_int == 4 ? 8'h0F : 8'hFF);
 
-				if(src_selector == 0) begin
-					s_axis_rr_tdata = m00_fifo_rd_data;
-					s_axis_rr_tvalid = m00_fifo_data_valid;
-					m00_fifo_rd_en = s_axis_rr_fire;
-				end else if(src_selector == 1) begin
-					s_axis_rr_tdata = m01_fifo_rd_data;
-					s_axis_rr_tvalid = m01_fifo_data_valid;
-					m01_fifo_rd_en = s_axis_rr_fire;
-				end
+				s_axis_rr_tdata = m_fifo_rd_data[src_sel];
+				s_axis_rr_tvalid = m_fifo_data_valid[src_sel];
+				m_fifo_rd_en[src_sel] = s_axis_rr_fire;
 			end
 		endcase
 	end
+
+	assign s_axis_rr_tuser[0] = 1'b0; // Unused for V6
+	assign s_axis_rr_tuser[1] = 1'b0; // Error forward packet
+	assign s_axis_rr_tuser[2] = 1'b0; // Stream packet
+	assign s_axis_rr_tuser[3] = 1'b0; // Unused discontinue
+	assign s_axis_rr_fire = s_axis_rr_tready && s_axis_rr_tvalid;
 endmodule
