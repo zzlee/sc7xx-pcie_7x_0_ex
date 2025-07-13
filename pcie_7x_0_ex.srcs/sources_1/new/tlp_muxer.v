@@ -29,7 +29,7 @@ module tlp_muxer #(
 	input clk,
 	input rst_n,
 
-	// AXIS for input 0
+	// Input 0
 	input [C_DATA_WIDTH-1:0] s00_axis_tdata,
 	input [KEEP_WIDTH-1:0]   s00_axis_tkeep,
 	input                    s00_axis_tlast,
@@ -37,7 +37,7 @@ module tlp_muxer #(
 	output                   s00_axis_tready,
 	input [C_USER_WIDTH-1:0] s00_axis_tuser,
 
-	// AXIS for input 1
+	// Input 1
 	input [C_DATA_WIDTH-1:0] s01_axis_tdata,
 	input [KEEP_WIDTH-1:0]   s01_axis_tkeep,
 	input                    s01_axis_tlast,
@@ -45,7 +45,7 @@ module tlp_muxer #(
 	output                   s01_axis_tready,
 	input [C_USER_WIDTH-1:0] s01_axis_tuser,
 
-	// AXIS for input 2
+	// Input 2
 	input [C_DATA_WIDTH-1:0] s02_axis_tdata,
 	input [KEEP_WIDTH-1:0]   s02_axis_tkeep,
 	input                    s02_axis_tlast,
@@ -53,7 +53,23 @@ module tlp_muxer #(
 	output                   s02_axis_tready,
 	input [C_USER_WIDTH-1:0] s02_axis_tuser,
 
-	// AXIS for output
+	// Input 3
+	input [C_DATA_WIDTH-1:0] s03_axis_tdata,
+	input [KEEP_WIDTH-1:0]   s03_axis_tkeep,
+	input                    s03_axis_tlast,
+	input                    s03_axis_tvalid,
+	output                   s03_axis_tready,
+	input [C_USER_WIDTH-1:0] s03_axis_tuser,
+
+	// Input 4
+	input [C_DATA_WIDTH-1:0] s04_axis_tdata,
+	input [KEEP_WIDTH-1:0]   s04_axis_tkeep,
+	input                    s04_axis_tlast,
+	input                    s04_axis_tvalid,
+	output                   s04_axis_tready,
+	input [C_USER_WIDTH-1:0] s04_axis_tuser,
+
+	// Output
 	output [C_DATA_WIDTH-1:0] m_axis_tdata,
 	output [KEEP_WIDTH-1:0]   m_axis_tkeep,
 	output                    m_axis_tlast,
@@ -62,24 +78,24 @@ module tlp_muxer #(
 	output [C_USER_WIDTH-1:0] m_axis_tuser
 );
 
-	localparam SLAVE_COUNT = 3;
+	localparam SRC_COUNT = 5;
 
-	reg [SLAVE_COUNT-1:0]          slaves_arb_input_unencoded_reg;
-	wire                           slaves_arb_output_valid;
-	wire [$clog2(SLAVE_COUNT)-1:0] slaves_arb_output_encoded;
-	wire [SLAVE_COUNT-1:0]         slaves_arb_output_unencoded;
+	reg [SRC_COUNT-1:0]          slaves_arb_input_unencoded_reg;
+	wire                         slaves_arb_output_valid;
+	wire [$clog2(SRC_COUNT)-1:0] slaves_arb_output_encoded;
+	wire [SRC_COUNT-1:0]         slaves_arb_output_unencoded;
 
-	wire [C_DATA_WIDTH-1:0] s_axis_tdata [SLAVE_COUNT-1:0];
-	wire [KEEP_WIDTH-1:0]   s_axis_tkeep [SLAVE_COUNT-1:0];
-	wire                    s_axis_tlast [SLAVE_COUNT-1:0];
-	wire                    s_axis_tvalid [SLAVE_COUNT-1:0];
-	wire                    s_axis_tready [SLAVE_COUNT-1:0];
-	wire [C_USER_WIDTH-1:0] s_axis_tuser [SLAVE_COUNT-1:0];
+	wire [C_DATA_WIDTH-1:0] s_axis_tdata [SRC_COUNT-1:0];
+	wire [KEEP_WIDTH-1:0]   s_axis_tkeep [SRC_COUNT-1:0];
+	wire                    s_axis_tlast [SRC_COUNT-1:0];
+	wire [SRC_COUNT-1:0]    s_axis_tvalid;
+	wire                    s_axis_tready [SRC_COUNT-1:0];
+	wire [C_USER_WIDTH-1:0] s_axis_tuser [SRC_COUNT-1:0];
 
 	wire m_axis_fire;
 
 	priority_encoder #(
-		.WIDTH(SLAVE_COUNT)
+		.WIDTH(SRC_COUNT)
 	) slaves_arb_U(
 		.input_unencoded(slaves_arb_input_unencoded_reg),
 		.output_valid(slaves_arb_output_valid),
@@ -87,6 +103,8 @@ module tlp_muxer #(
 		.output_unencoded(slaves_arb_output_unencoded)
 	);
 
+// ----------------------------------------------------------
+// RR group
 	assign s_axis_tdata[0] = s00_axis_tdata;
 	assign s_axis_tkeep[0] = s00_axis_tkeep;
 	assign s_axis_tlast[0] = s00_axis_tlast;
@@ -108,12 +126,27 @@ module tlp_muxer #(
 	assign s02_axis_tready = s_axis_tready[2];
 	assign s_axis_tuser[2] = s02_axis_tuser;
 
+	assign s_axis_tdata[3] = s03_axis_tdata;
+	assign s_axis_tkeep[3] = s03_axis_tkeep;
+	assign s_axis_tlast[3] = s03_axis_tlast;
+	assign s_axis_tvalid[3] = s03_axis_tvalid;
+	assign s03_axis_tready = s_axis_tready[3];
+	assign s_axis_tuser[3] = s03_axis_tuser;
+
+	assign s_axis_tdata[4] = s04_axis_tdata;
+	assign s_axis_tkeep[4] = s04_axis_tkeep;
+	assign s_axis_tlast[4] = s04_axis_tlast;
+	assign s_axis_tvalid[4] = s04_axis_tvalid;
+	assign s04_axis_tready = s_axis_tready[4];
+	assign s_axis_tuser[4] = s04_axis_tuser;
+// ----------------------------------------------------------
+
 	assign m_axis_fire = m_axis_tvalid && m_axis_tready;
 
 	generate
 		genvar i;
 
-		for (i = 0; i < SLAVE_COUNT; i = i + 1) begin
+		for (i = 0; i < SRC_COUNT; i = i + 1) begin
 			assign s_axis_tready[i] = ((slaves_arb_output_valid && slaves_arb_output_encoded == i) ? m_axis_tready : 0);
 		end
 	endgenerate
@@ -133,11 +166,7 @@ module tlp_muxer #(
 					slaves_arb_input_unencoded_reg <= slaves_arb_input_unencoded_reg & ~slaves_arb_output_unencoded;
 				end
 			end else begin
-				slaves_arb_input_unencoded_reg <= {
-					s_axis_tvalid[2],
-					s_axis_tvalid[1],
-					s_axis_tvalid[0]
-				};
+				slaves_arb_input_unencoded_reg <= s_axis_tvalid;
 			end
 		end
 	end

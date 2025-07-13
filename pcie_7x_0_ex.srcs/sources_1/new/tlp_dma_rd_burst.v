@@ -35,12 +35,12 @@ module tlp_dma_rd_burst #(
 	input rst_n,
 
 	// RC TLP
-	input [C_DATA_WIDTH-1:0]    m_axis_rc_tdata,
-	input [KEEP_WIDTH-1:0]      m_axis_rc_tkeep,
-	input                       m_axis_rc_tlast,
-	input                       m_axis_rc_tvalid,
-	output reg                  m_axis_rc_tready,
-	input [C_RC_USER_WIDTH-1:0] m_axis_rc_tuser,
+	input [C_DATA_WIDTH-1:0]    s_axis_rc_tdata,
+	input [KEEP_WIDTH-1:0]      s_axis_rc_tkeep,
+	input                       s_axis_rc_tlast,
+	input                       s_axis_rc_tvalid,
+	output reg                  s_axis_rc_tready,
+	input [C_RC_USER_WIDTH-1:0] s_axis_rc_tuser,
 
 	input [C_RC_COUNT*BURST_WIDTH-1:0] rc_burst_bytes,
 	input [C_RC_COUNT-1:0]             rc_req,
@@ -65,7 +65,7 @@ module tlp_dma_rd_burst #(
 	reg [STATE_BITS-1:0]     ap_state;
 	reg [C_RC_CNT_WIDTH-1:0] rc_idx;
 
-	wire m_axis_rc_fire;
+	wire s_axis_rc_fire;
 
 	reg [RC_STATE_BITS-1:0]    rc_state [C_RC_COUNT-1:0];
 	reg [BURST_WIDTH-1:0]      rc_burst_bytes_int [C_RC_COUNT-1:0];
@@ -90,17 +90,17 @@ module tlp_dma_rd_burst #(
 		end else begin
 			case(ap_state)
 				STATE_IDLE: begin
-					if(m_axis_rc_fire) begin
-						if(m_axis_rc_tdata[8 +: C_RC_CNT_WIDTH] < C_RC_COUNT) begin
+					if(s_axis_rc_fire) begin
+						if(s_axis_rc_tdata[8 +: C_RC_CNT_WIDTH] < C_RC_COUNT) begin
 							ap_state <= STATE_RECV;
-							rc_idx <= m_axis_rc_tdata[8 +: C_RC_CNT_WIDTH];
+							rc_idx <= s_axis_rc_tdata[8 +: C_RC_CNT_WIDTH];
 
-							if(m_axis_rc_tlast) begin
+							if(s_axis_rc_tlast) begin
 								ap_state <= STATE_LAST;
 							end
 						end else begin
 							ap_state <= STATE_UNEXP;
-							if(m_axis_rc_tlast) begin
+							if(s_axis_rc_tlast) begin
 								ap_state <= STATE_IDLE;
 							end
 						end
@@ -108,22 +108,22 @@ module tlp_dma_rd_burst #(
 				end
 
 				STATE_RECV: begin
-					if(m_axis_rc_fire) begin
-						if(m_axis_rc_tlast) begin
+					if(s_axis_rc_fire) begin
+						if(s_axis_rc_tlast) begin
 							ap_state <= STATE_LAST;
 						end
 					end
 				end
 
 				STATE_LAST: begin
-					if(m_axis_rc_fire) begin
+					if(s_axis_rc_fire) begin
 						ap_state <= STATE_IDLE;
 					end
 				end
 
 				STATE_UNEXP: begin
-					if(m_axis_rc_fire) begin
-						if(m_axis_rc_tlast) begin
+					if(s_axis_rc_fire) begin
+						if(s_axis_rc_tlast) begin
 							ap_state <= STATE_IDLE;
 						end
 					end
@@ -132,26 +132,26 @@ module tlp_dma_rd_burst #(
 		end
 	end
 
-	// @COMB m_axis_rc_tready
+	// @COMB s_axis_rc_tready
 	always @(*) begin
-		m_axis_rc_tready = 0;
+		s_axis_rc_tready = 0;
 
 		case (ap_state)
 			STATE_IDLE: begin
-				m_axis_rc_tready = 1;
+				s_axis_rc_tready = 1;
 			end
 
 			STATE_RECV: begin
-				m_axis_rc_tready = rc_tready[rc_idx];
+				s_axis_rc_tready = rc_tready[rc_idx];
 			end
 
 			STATE_UNEXP: begin
-				m_axis_rc_tready = 1;
+				s_axis_rc_tready = 1;
 			end
 		endcase
 	end
 
-	assign m_axis_rc_fire = m_axis_rc_tready && m_axis_rc_tvalid;
+	assign s_axis_rc_fire = s_axis_rc_tready && s_axis_rc_tvalid;
 
 	// @FF tdata_q, @FF tkeep_q, @FF tlast_q, @FF tuser_q
 	always @(posedge clk or negedge rst_n) begin
@@ -163,19 +163,19 @@ module tlp_dma_rd_burst #(
 		end else begin
 			case(ap_state)
 				STATE_IDLE: begin
-					if(m_axis_rc_fire) begin
-						tdata_q <= m_axis_rc_tdata;
-						tkeep_q <= m_axis_rc_tkeep;
-						tlast_q <= m_axis_rc_tlast;
+					if(s_axis_rc_fire) begin
+						tdata_q <= s_axis_rc_tdata;
+						tkeep_q <= s_axis_rc_tkeep;
+						tlast_q <= s_axis_rc_tlast;
 						tuser_q <= 1;
 					end
 				end
 
 				STATE_RECV: begin
-					if(m_axis_rc_fire) begin
-						tdata_q <= m_axis_rc_tdata;
-						tkeep_q <= m_axis_rc_tkeep;
-						tlast_q <= m_axis_rc_tlast;
+					if(s_axis_rc_fire) begin
+						tdata_q <= s_axis_rc_tdata;
+						tkeep_q <= s_axis_rc_tkeep;
+						tlast_q <= s_axis_rc_tlast;
 						tuser_q <= 0;
 					end
 				end
@@ -183,7 +183,7 @@ module tlp_dma_rd_burst #(
 		end
 	end
 
-	// @FF rc_state[i]
+	// @FF rc_state[i], @FF rc_burst_bytes_int[i]
 	always @(posedge clk or negedge rst_n) begin
 		if(~rst_n) begin
 			for(i = 0;i < C_RC_COUNT;i = i + 1) begin
@@ -243,7 +243,7 @@ module tlp_dma_rd_burst #(
 
 		case(ap_state)
 			STATE_RECV: begin
-				rc_tvalid[rc_idx] = m_axis_rc_tvalid;
+				rc_tvalid[rc_idx] = s_axis_rc_tvalid;
 			end
 
 			STATE_LAST: begin

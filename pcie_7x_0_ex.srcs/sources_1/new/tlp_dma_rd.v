@@ -33,29 +33,45 @@ module tlp_dma_rd #(
 	input clk,
 	input rst_n,
 
-	// RC00 TLP
-	input [C_DATA_WIDTH-1:0]    m00_axis_rc_tdata,
-	input [KEEP_WIDTH-1:0]      m00_axis_rc_tkeep,
-	input                       m00_axis_rc_tlast,
-	input                       m00_axis_rc_tvalid,
-	output                      m00_axis_rc_tready,
-	input [C_RC_USER_WIDTH-1:0] m00_axis_rc_tuser,
+	// RC DESC TLP
+	input [C_DATA_WIDTH-1:0]    s_axis_rc_desc_tdata,
+	input [KEEP_WIDTH-1:0]      s_axis_rc_desc_tkeep,
+	input                       s_axis_rc_desc_tlast,
+	input                       s_axis_rc_desc_tvalid,
+	output                      s_axis_rc_desc_tready,
+	input [C_RC_USER_WIDTH-1:0] s_axis_rc_desc_tuser,
+
+	// RR DESC TLP
+	output [C_DATA_WIDTH-1:0]     m_axis_rr_desc_tdata,
+	output [KEEP_WIDTH-1:0]       m_axis_rr_desc_tkeep,
+	output                        m_axis_rr_desc_tlast,
+	output                        m_axis_rr_desc_tvalid,
+	input                         m_axis_rr_desc_tready,
+	output [C_RR_USER_WIDTH-1:0]  m_axis_rr_desc_tuser,
+
+	// RC TLP
+	input [C_DATA_WIDTH-1:0]    s_axis_rc_tdata,
+	input [KEEP_WIDTH-1:0]      s_axis_rc_tkeep,
+	input                       s_axis_rc_tlast,
+	input                       s_axis_rc_tvalid,
+	output                      s_axis_rc_tready,
+	input [C_RC_USER_WIDTH-1:0] s_axis_rc_tuser,
 
 	// RR TLP
-	output reg [C_DATA_WIDTH-1:0] s_axis_rr_tdata,
-	output reg [KEEP_WIDTH-1:0]   s_axis_rr_tkeep,
-	output reg                    s_axis_rr_tlast,
-	output reg                    s_axis_rr_tvalid,
-	input                         s_axis_rr_tready,
-	output [C_RR_USER_WIDTH-1:0]  s_axis_rr_tuser,
+	output reg [C_DATA_WIDTH-1:0] m_axis_rr_tdata,
+	output reg [KEEP_WIDTH-1:0]   m_axis_rr_tkeep,
+	output reg                    m_axis_rr_tlast,
+	output reg                    m_axis_rr_tvalid,
+	input                         m_axis_rr_tready,
+	output [C_RR_USER_WIDTH-1:0]  m_axis_rr_tuser,
 
-	// S00 SINK
-	output reg [C_SINK_DATA_WIDTH-1:0] s00_axis_tdata,
-	output reg [SINK_KEEP_WIDTH-1:0]   s00_axis_tkeep,
-	output                             s00_axis_tlast,
-	output reg                         s00_axis_tvalid,
-	input                              s00_axis_tready,
-	output                             s00_axis_tuser,
+	// M00 SINK
+	output reg [C_SINK_DATA_WIDTH-1:0] m00_axis_tdata,
+	output reg [SINK_KEEP_WIDTH-1:0]   m00_axis_tkeep,
+	output                             m00_axis_tlast,
+	output reg                         m00_axis_tvalid,
+	input                              m00_axis_tready,
+	output                             m00_axis_tuser,
 
 	input [15:0]             cfg_completer_id,
 	input [C_DATA_WIDTH-1:0] tlp_hdr_dw1_0,
@@ -73,9 +89,8 @@ module tlp_dma_rd #(
 );
 	localparam TLP_MEM_RD32_FMT_TYPE = 7'b00_00000;
 	localparam TLP_MEM_RD64_FMT_TYPE = 7'b01_00000;
-	localparam TLP_CPLD_FMT_TYPE     = 7'b10_01010;
 
-	localparam RC_TAG_BASE  = 8'h10; // tag base for tlp_demuxer/s01_axis_rc
+	localparam RC_TAG_BASE  = 8'h10; // tag base for tlp_demuxer/m01_axis_rc
 	localparam RC_COUNT     = 15;
 	localparam RC_CNT_WIDTH = 4;
 
@@ -103,7 +118,7 @@ module tlp_dma_rd #(
 	reg [STATE_BITS-1:0]   ap_state;
 	reg [63:0]             buf_addr_int;
 	wire [63:0]            buf_addr_next;
-	reg [SIZE_WIDTH-1:0]   buf_addr_adder_inc;
+	reg [SIZE_WIDTH-1:0]   addr_adder_inc;
 	reg                    buf_addr_32bit;
 	wire [31:0]            buf_addr_lo;
 	wire [31:0]            buf_addr_hi;
@@ -112,7 +127,7 @@ module tlp_dma_rd #(
 	reg [BURST_WIDTH-1:0]  burst_bytes_int;
 	wire [31:0]            size_4x;
 
-	wire s_axis_rr_fire;
+	wire m_axis_rr_fire;
 
 	// RX TLP DW1_0
 	wire [6:0]  rx_tlp_hdr_fmt_type;
@@ -146,18 +161,22 @@ module tlp_dma_rd #(
 	assign ap_done = (ap_state == STATE_FINISH);
 	assign ap_ready = ap_done;
 
+	// TODO: RC/RR DESC handling
+	assign s_axis_rc_desc_tready = 0;
+	assign m_axis_rr_desc_tvalid = 0;
+
 	assign size_4x = (size & ~32'b11);
 	assign buf_addr_lo = {buf_addr_int[31:2], 2'b00};
 	assign buf_addr_hi = buf_addr_int[63:32];
 
-	buf_addr_adder #(
+	addr_adder #(
 		.C_INC_WIDTH(SIZE_WIDTH)
-	) buf_addr_adder_U (
+	) addr_adder_U (
 		.clk(clk),
 		.rst_n(rst_n),
-		.buf_addr(buf_addr_int),
-		.inc(buf_addr_adder_inc),
-		.buf_addr_next(buf_addr_next)
+		.addr(buf_addr_int),
+		.inc(addr_adder_inc),
+		.addr_next(buf_addr_next)
 	);
 
 	assign rx_tlp_hdr_fmt_type = tlp_hdr_dw1_0[30:24];
@@ -199,13 +218,13 @@ module tlp_dma_rd #(
 
 				STATE_DMA_RD_DW1_0:
 					if(rc_avail[rc_req_idx]) begin
-						if(s_axis_rr_fire) begin
+						if(m_axis_rr_fire) begin
 							ap_state <= STATE_DMA_RD_DW3_2;
 						end
 					end
 
 				STATE_DMA_RD_DW3_2:
-					if(s_axis_rr_fire) begin
+					if(m_axis_rr_fire) begin
 						ap_state <= STATE_DMA_RD;
 					end
 
@@ -232,18 +251,18 @@ module tlp_dma_rd #(
 		end
 	end
 
-	// @COMB s_axis_rr_tdata, @COMB s_axis_rr_tkeep, @COMB s_axis_rr_tlast, @COMB s_axis_rr_tvalid
+	// @COMB m_axis_rr_tdata, @COMB m_axis_rr_tkeep, @COMB m_axis_rr_tlast, @COMB m_axis_rr_tvalid
 	always @(*) begin
-		s_axis_rr_tdata = 'hEEFFAABBCAFECAFE; // for debug purpose
-		s_axis_rr_tkeep = 0;
-		s_axis_rr_tlast = 0;
-		s_axis_rr_tvalid = 0;
+		m_axis_rr_tdata = 'hEEFFAABBCAFECAFE; // for debug purpose
+		m_axis_rr_tkeep = 0;
+		m_axis_rr_tlast = 0;
+		m_axis_rr_tvalid = 0;
 
 		case(ap_state)
 			STATE_DMA_RD_DW1_0:
 				if(rc_avail[rc_req_idx]) begin
-					s_axis_rr_tlast = 0;
-					s_axis_rr_tdata = {           // Bits
+					m_axis_rr_tlast = 0;
+					m_axis_rr_tdata = {           // Bits
 						// DW1
 						cfg_completer_id,         // 16
 						tlp_hdr_tag[rc_req_idx],  // 8
@@ -261,47 +280,47 @@ module tlp_dma_rd #(
 						{2'b0},                   // 2
 						tlp_hdr_len               // 10
 					};
-					s_axis_rr_tkeep = 8'hFF;
-					s_axis_rr_tvalid = 1;
+					m_axis_rr_tkeep = 8'hFF;
+					m_axis_rr_tvalid = 1;
 				end
 
 			STATE_DMA_RD_DW3_2: begin
-				s_axis_rr_tlast = 1;
-				s_axis_rr_tvalid = 1;
+				m_axis_rr_tlast = 1;
+				m_axis_rr_tvalid = 1;
 
 				if(buf_addr_32bit) begin
-					s_axis_rr_tdata = {
+					m_axis_rr_tdata = {
 						// DW3
 						32'b0,
 						// DW2 Addr
 						buf_addr_lo
 					};
-					s_axis_rr_tkeep = 8'h0F;
+					m_axis_rr_tkeep = 8'h0F;
 				end else begin
-					s_axis_rr_tdata = {
+					m_axis_rr_tdata = {
 						// DW3 Addr LO
 						buf_addr_lo,
 						// DW2 Addr HI
 						buf_addr_hi
 					};
-					s_axis_rr_tkeep = 8'hFF;
+					m_axis_rr_tkeep = 8'hFF;
 				end
 			end
 		endcase
 	end
 
-	assign s_axis_rr_tuser[0] = 1'b0; // Unused for V6
-	assign s_axis_rr_tuser[1] = 1'b0; // Error forward packet
-	assign s_axis_rr_tuser[2] = 1'b0; // Stream packet
-	assign s_axis_rr_tuser[3] = 1'b0; // Unused discontinue
-	assign s_axis_rr_fire = s_axis_rr_tready && s_axis_rr_tvalid;
+	assign m_axis_rr_tuser[0] = 1'b0; // Unused for V6
+	assign m_axis_rr_tuser[1] = 1'b0; // Error forward packet
+	assign m_axis_rr_tuser[2] = 1'b0; // Stream packet
+	assign m_axis_rr_tuser[3] = 1'b0; // Unused discontinue
+	assign m_axis_rr_fire = m_axis_rr_tready && m_axis_rr_tvalid;
 
-	// @FF buf_addr_int, @FF buf_addr_32bit, @FF buf_addr_adder_inc, @FF size_int, @FF size_next, @FF times_int, @FF burst_bytes_int, @FF rc_req_idx
+	// @FF buf_addr_int, @FF buf_addr_32bit, @FF addr_adder_inc, @FF size_int, @FF size_next, @FF times_int, @FF burst_bytes_int, @FF rc_req_idx
 	always @(posedge clk or negedge rst_n) begin
 		if(~rst_n) begin
 			buf_addr_int <= 0;
 			buf_addr_32bit <= 0;
-			buf_addr_adder_inc <= 0;
+			addr_adder_inc <= 0;
 			size_int <= 0;
 			size_next <= 0;
 			times_int <= 0;
@@ -333,11 +352,11 @@ module tlp_dma_rd #(
 					rc_req_idx <= (rc_req_idx == RC_COUNT - 1) ? 0 : rc_req_idx + 1;
 
 					if(size_int > BURST_SIZE) begin
-						buf_addr_adder_inc <= BURST_SIZE;
+						addr_adder_inc <= BURST_SIZE;
 						size_next <= size_int - BURST_SIZE;
 						burst_bytes_int <= BURST_SIZE;
 					end else begin
-						buf_addr_adder_inc <= size_int;
+						addr_adder_inc <= size_int;
 						size_next <= 0;
 						burst_bytes_int <= size_int;
 					end
@@ -356,12 +375,12 @@ module tlp_dma_rd #(
 		.clk(clk),
 		.rst_n(rst_n),
 
-		.m_axis_rc_tdata(m00_axis_rc_tdata),
-		.m_axis_rc_tkeep(m00_axis_rc_tkeep),
-		.m_axis_rc_tlast(m00_axis_rc_tlast),
-		.m_axis_rc_tvalid(m00_axis_rc_tvalid),
-		.m_axis_rc_tready(m00_axis_rc_tready),
-		.m_axis_rc_tuser(m00_axis_rc_tuser),
+		.s_axis_rc_tdata(s_axis_rc_tdata),
+		.s_axis_rc_tkeep(s_axis_rc_tkeep),
+		.s_axis_rc_tlast(s_axis_rc_tlast),
+		.s_axis_rc_tvalid(s_axis_rc_tvalid),
+		.s_axis_rc_tready(s_axis_rc_tready),
+		.s_axis_rc_tuser(s_axis_rc_tuser),
 
 		.rc_burst_bytes(rc_burst_bytes),
 		.rc_req(rc_req),
@@ -379,7 +398,7 @@ module tlp_dma_rd #(
 			case(ap_state)
 				STATE_DMA_RD_DW1_0:
 					if(rc_avail[rc_req_idx]) begin
-						if(s_axis_rr_fire) begin
+						if(m_axis_rr_fire) begin
 							rc_req[rc_req_idx] <= 1;
 							rc_burst_bytes[rc_req_idx*BURST_WIDTH +: BURST_WIDTH] <= burst_bytes_int;
 						end

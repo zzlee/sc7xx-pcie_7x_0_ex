@@ -26,23 +26,23 @@ module pcie_intr_ctrl #(
 	input clk,
 	input rst_n,
 
-	input  [C_S_AXI_ADDR_WIDTH-1:0]   m_axi_ctrl_awaddr,
-	input                             m_axi_ctrl_awvalid,
-	output                            m_axi_ctrl_awready,
-	input  [C_S_AXI_DATA_WIDTH-1:0]   m_axi_ctrl_wdata,
-	input  [C_S_AXI_DATA_WIDTH/8-1:0] m_axi_ctrl_wstrb,
-	input                             m_axi_ctrl_wvalid,
-	output                            m_axi_ctrl_wready,
-	output [1:0]                      m_axi_ctrl_bresp,
-	output                            m_axi_ctrl_bvalid,
-	input                             m_axi_ctrl_bready,
-	input  [C_S_AXI_ADDR_WIDTH-1:0]   m_axi_ctrl_araddr,
-	input                             m_axi_ctrl_arvalid,
-	output                            m_axi_ctrl_arready,
-	output [C_S_AXI_DATA_WIDTH-1:0]   m_axi_ctrl_rdata,
-	output [1:0]                      m_axi_ctrl_rresp,
-	output                            m_axi_ctrl_rvalid,
-	input                             m_axi_ctrl_rready,
+	input  [C_S_AXI_ADDR_WIDTH-1:0]   s_axi_ctrl_awaddr,
+	input                             s_axi_ctrl_awvalid,
+	output                            s_axi_ctrl_awready,
+	input  [C_S_AXI_DATA_WIDTH-1:0]   s_axi_ctrl_wdata,
+	input  [C_S_AXI_DATA_WIDTH/8-1:0] s_axi_ctrl_wstrb,
+	input                             s_axi_ctrl_wvalid,
+	output                            s_axi_ctrl_wready,
+	output [1:0]                      s_axi_ctrl_bresp,
+	output                            s_axi_ctrl_bvalid,
+	input                             s_axi_ctrl_bready,
+	input  [C_S_AXI_ADDR_WIDTH-1:0]   s_axi_ctrl_araddr,
+	input                             s_axi_ctrl_arvalid,
+	output                            s_axi_ctrl_arready,
+	output [C_S_AXI_DATA_WIDTH-1:0]   s_axi_ctrl_rdata,
+	output [1:0]                      s_axi_ctrl_rresp,
+	output                            s_axi_ctrl_rvalid,
+	input                             s_axi_ctrl_rready,
 
 	output [31:0] vector_map_0
 );
@@ -103,23 +103,23 @@ localparam
 assign ACLK_EN = 1;
 assign ACLK = clk;
 assign ARESET = ~rst_n;
-assign AWADDR = m_axi_ctrl_awaddr;
-assign AWVALID = m_axi_ctrl_awvalid;
-assign m_axi_ctrl_awready = AWREADY;
-assign WDATA = m_axi_ctrl_wdata;
-assign WSTRB = m_axi_ctrl_wstrb;
-assign WVALID = m_axi_ctrl_wvalid;
-assign m_axi_ctrl_wready = WREADY;
-assign m_axi_ctrl_bresp = BRESP;
-assign m_axi_ctrl_bvalid = BVALID;
-assign BREADY = m_axi_ctrl_bready;
-assign ARADDR = m_axi_ctrl_araddr;
-assign ARVALID = m_axi_ctrl_arvalid;
-assign m_axi_ctrl_arready = ARREADY;
-assign m_axi_ctrl_rdata = RDATA;
-assign m_axi_ctrl_rresp = RRESP;
-assign m_axi_ctrl_rvalid = RVALID;
-assign RREADY = m_axi_ctrl_rready;
+assign AWADDR = s_axi_ctrl_awaddr;
+assign AWVALID = s_axi_ctrl_awvalid;
+assign s_axi_ctrl_awready = AWREADY;
+assign WDATA = s_axi_ctrl_wdata;
+assign WSTRB = s_axi_ctrl_wstrb;
+assign WVALID = s_axi_ctrl_wvalid;
+assign s_axi_ctrl_wready = WREADY;
+assign s_axi_ctrl_bresp = BRESP;
+assign s_axi_ctrl_bvalid = BVALID;
+assign BREADY = s_axi_ctrl_bready;
+assign ARADDR = s_axi_ctrl_araddr;
+assign ARVALID = s_axi_ctrl_arvalid;
+assign s_axi_ctrl_arready = ARREADY;
+assign s_axi_ctrl_rdata = RDATA;
+assign s_axi_ctrl_rresp = RRESP;
+assign s_axi_ctrl_rvalid = RVALID;
+assign RREADY = s_axi_ctrl_rready;
 
 assign vector_map_0 = int_out_vector_map_0;
 
