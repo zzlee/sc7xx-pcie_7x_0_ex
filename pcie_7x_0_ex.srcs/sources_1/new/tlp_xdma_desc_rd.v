@@ -169,8 +169,8 @@ module tlp_xdma_desc_rd #(
 	assign tlp_hdr_last_be = 4'b1111;
 	assign tlp_hdr_first_be = 4'b1111;
 
-	assign desc_dw0 = {s_axis_rc_desc_tdata[7:0], s_axis_rc_desc_tdata[15:8], s_axis_rc_desc_tdata[23:16], s_axis_rc_desc_tdata[31:24]};
-	assign desc_dw1 = {s_axis_rc_desc_tdata[39:32], s_axis_rc_desc_tdata[47:40], s_axis_rc_desc_tdata[55:48], s_axis_rc_desc_tdata[63:56]};
+	assign desc_dw0 = {s_axis_rc_desc_tdata[0*8 +: 8], s_axis_rc_desc_tdata[1*8 +: 8], s_axis_rc_desc_tdata[2*8 +: 8], s_axis_rc_desc_tdata[3*8 +: 8]};
+	assign desc_dw1 = {s_axis_rc_desc_tdata[4*8 +: 8], s_axis_rc_desc_tdata[5*8 +: 8], s_axis_rc_desc_tdata[6*8 +: 8], s_axis_rc_desc_tdata[7*8 +: 8]};
 
 	generate
 		if(C_DMA_DIR == DMA_FROM_DEVICE) begin
@@ -283,14 +283,10 @@ module tlp_xdma_desc_rd #(
 					end
 				end
 
-				STATE_RX_DW3_2: begin
-					if(s_axis_rc_desc_fire) begin
-						case(desc_inc)
-							4: begin
-								desc_addr_int <= {desc_next_hi, desc_next_lo};
-								desc_adj_int <= desc_adj_int - 1;
-							end
-						endcase
+				STATE_WR_FIFO: begin
+					if(! fifo_xdma_desc_full) begin
+						desc_addr_int <= {desc_next_hi, desc_next_lo};
+						desc_adj_int <= desc_adj_int - 1;
 					end
 				end
 			endcase
@@ -432,16 +428,18 @@ module tlp_xdma_desc_rd #(
 			end
 
 			STATE_WR_FIFO: begin
-				if(desc_bytes == 0) begin
-					ERR_MASK_next = ERR_MASK_next | ERR_MASK_DESC_BYTES;
-				end
+				if(! fifo_xdma_desc_full) begin
+					if(desc_bytes == 0) begin
+						ERR_MASK_next = ERR_MASK_next | ERR_MASK_DESC_BYTES;
+					end
 
-				if(desc_next_hi == 0 && desc_next_lo == 0 && desc_adj_int != 0) begin
-					ERR_MASK_next = ERR_MASK_next | ERR_MASK_DESC_NEXT;
-				end
+					if(desc_next_hi == 0 && desc_next_lo == 0 && desc_adj_int != 0) begin
+						ERR_MASK_next = ERR_MASK_next | ERR_MASK_DESC_NEXT;
+					end
 
-				if(desc_next_hi != 0 && desc_next_lo != 0 && desc_adj_int == 0) begin
-					ERR_MASK_next = ERR_MASK_next | ERR_MASK_DESC_END;
+					if(desc_next_hi != 0 && desc_next_lo != 0 && desc_adj_int == 0) begin
+						ERR_MASK_next = ERR_MASK_next | ERR_MASK_DESC_END;
+					end
 				end
 			end
 		endcase

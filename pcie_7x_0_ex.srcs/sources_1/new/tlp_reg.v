@@ -149,8 +149,8 @@ module tlp_reg #(
 	assign byte_count = 12'd4;
 	assign lower_addr = {tlp_hdr_addr32[6:0]};
 	assign bar0_addr = (tlp_hdr_addr32 & ~C_BAR0_ADDR_MASK);
-	assign pci_rd32_data = {ctrl_rx_data[7:0], ctrl_rx_data[15:8], ctrl_rx_data[23:16], ctrl_rx_data[31:24]};
-	assign axi_wr32_data = {tlp_hdr_dw3_2[39:32], tlp_hdr_dw3_2[47:40], tlp_hdr_dw3_2[55:48], tlp_hdr_dw3_2[63:56]};
+	assign pci_rd32_data = {ctrl_rx_data [0*8 +: 8], ctrl_rx_data [1*8 +: 8], ctrl_rx_data [2*8 +: 8], ctrl_rx_data [3*8 +: 8]};
+	assign axi_wr32_data = {tlp_hdr_dw3_2[4*8 +: 8], tlp_hdr_dw3_2[5*8 +: 8], tlp_hdr_dw3_2[6*8 +: 8], tlp_hdr_dw3_2[7*8 +: 8]};
 
 	assign m_axi_ctrl_awaddr = bar0_addr;
 	assign m_axi_ctrl_wdata = axi_wr32_data;

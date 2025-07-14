@@ -92,7 +92,6 @@ module tlp_demuxer #(
 	localparam RC_DESC_COUNT     = 2;
 	localparam RC_DESC_CNT_WIDTH = $clog2(RC_DESC_COUNT + 1);
 
-	localparam STATE_BITS               = 3;
 	localparam STATE_IDLE               = 3'd0;
 	localparam STATE_DEMUX              = 3'd1;
 	localparam STATE_DEMUX_CQ           = 3'd2;
@@ -101,6 +100,7 @@ module tlp_demuxer #(
 	localparam STATE_DEMUX_RC_LAST      = 3'd5;
 	localparam STATE_DEMUX_RC_DESC      = 3'd6;
 	localparam STATE_DEMUX_RC_DESC_LAST = 3'd7;
+	localparam STATE_BITS               = 3;
 
 	genvar gen_i;
 	integer i;
@@ -117,11 +117,11 @@ module tlp_demuxer #(
 
 	reg  m_axis_rc_tvalid [RC_GRP_COUNT-1:0];
 	wire m_axis_rc_tready [RC_GRP_COUNT-1:0];
-	// wire m_axis_rc_fire [RC_GRP_COUNT-1:0];
+	wire m_axis_rc_fire [RC_GRP_COUNT-1:0];
 
 	reg  m_axis_rc_desc_tvalid [RC_DESC_COUNT-1:0];
 	wire m_axis_rc_desc_tready [RC_DESC_COUNT-1:0];
-	// wire m_axis_rc_desc_fire [RC_DESC_COUNT-1:0];
+	wire m_axis_rc_desc_fire [RC_DESC_COUNT-1:0];
 
 	wire [4:0] tlp_hdr_type;
 
@@ -149,6 +149,29 @@ module tlp_demuxer #(
 	assign m_axis_rc_tready[1] = m01_axis_rc_tready;
 	assign m01_axis_rc_tuser = rc_tuser;
 
+	generate
+		for(gen_i = 0; gen_i < RC_GRP_COUNT; gen_i = gen_i + 1) begin
+			assign m_axis_rc_fire[gen_i] = m_axis_rc_tready[gen_i] && m_axis_rc_tvalid[gen_i];
+		end
+	endgenerate
+
+	// @COMB m_axis_rc_tvalid[i]
+	always @(*) begin
+		for(i = 0; i < RC_GRP_COUNT; i = i + 1) begin
+			m_axis_rc_tvalid[i] = 0;
+		end
+
+		case(ap_state)
+			STATE_DEMUX_RC: begin
+				m_axis_rc_tvalid[rc_grp] = s_axis_rx_tvalid;
+			end
+
+			STATE_DEMUX_RC_LAST: begin
+				m_axis_rc_tvalid[rc_grp] = 1;
+			end
+		endcase
+	end
+
 // ---------------------------------------------------
 // ---- RC DESC
 	assign m00_axis_rc_desc_tdata = rc_tdata;
@@ -165,21 +188,19 @@ module tlp_demuxer #(
 	assign m_axis_rc_desc_tready[1] = m01_axis_rc_desc_tready;
 	assign m01_axis_rc_desc_tuser = rc_tuser;
 
-	// @COMB m_axis_rc_tvalid[i]
+	generate
+		for(gen_i = 0; gen_i < RC_DESC_COUNT; gen_i = gen_i + 1) begin
+			assign m_axis_rc_desc_fire[gen_i] = m_axis_rc_desc_tready[gen_i] && m_axis_rc_desc_tvalid[gen_i];
+		end
+	endgenerate
+
+	// @COMB m_axis_rc_desc_tvalid[i]
 	always @(*) begin
-		for(i = 0; i < RC_GRP_COUNT; i = i + 1) begin
-			m_axis_rc_tvalid[i] = 0;
+		for(i = 0; i < RC_DESC_COUNT; i = i + 1) begin
+			m_axis_rc_desc_tvalid[i] = 0;
 		end
 
 		case(ap_state)
-			STATE_DEMUX_RC: begin
-				m_axis_rc_tvalid[rc_grp] = s_axis_rx_tvalid;
-			end
-
-			STATE_DEMUX_RC_LAST: begin
-				m_axis_rc_tvalid[rc_grp] = 1;
-			end
-
 			STATE_DEMUX_RC_DESC: begin
 				m_axis_rc_desc_tvalid[rc_desc] = s_axis_rx_tvalid;
 			end
@@ -189,18 +210,7 @@ module tlp_demuxer #(
 			end
 		endcase
 	end
-
-	// generate
-	// 	for(gen_i = 0; gen_i < RC_GRP_COUNT; gen_i = gen_i + 1) begin
-	// 		assign m_axis_rc_fire[gen_i] = m_axis_rc_tready[gen_i] && m_axis_rc_tvalid[gen_i];
-	// 	end
-	// endgenerate
-
-	// generate
-	// 	for(gen_i = 0; gen_i < RC_DESC_COUNT; gen_i = gen_i + 1) begin
-	// 		assign m_axis_rc_desc_fire[gen_i] = m_axis_rc_desc_tready[gen_i] && m_axis_rc_desc_tvalid[gen_i];
-	// 	end
-	// endgenerate
+// ---------------------------------------------------
 
 	// @FF ap_state
 	always @(posedge clk or negedge rst_n) begin
@@ -258,7 +268,7 @@ module tlp_demuxer #(
 				end
 
 				STATE_DEMUX_RC_LAST: begin
-					if(s_axis_rx_fire) begin
+					if(m_axis_rc_fire[rc_grp]) begin
 						ap_state <= STATE_DEMUX;
 					end
 				end
@@ -270,7 +280,7 @@ module tlp_demuxer #(
 				end
 
 				STATE_DEMUX_RC_DESC_LAST: begin
-					if(s_axis_rx_fire) begin
+					if(m_axis_rc_desc_fire[rc_desc]) begin
 						ap_state <= STATE_DEMUX;
 					end
 				end
