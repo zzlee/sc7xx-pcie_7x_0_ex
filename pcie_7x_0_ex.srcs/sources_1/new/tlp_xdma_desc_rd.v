@@ -49,10 +49,7 @@ module tlp_xdma_desc_rd #(
 	input                         m_axis_rr_desc_tready,
 	output [C_RR_USER_WIDTH-1:0]  m_axis_rr_desc_tuser,
 
-	input [15:0]             cfg_completer_id,
-	input [C_DATA_WIDTH-1:0] tlp_hdr_dw1_0,
-
-	output [2:0] probe0,
+	input [15:0] cfg_completer_id,
 
 	// FIFO RD
 	input                    rd_en,
@@ -79,8 +76,9 @@ module tlp_xdma_desc_rd #(
 	localparam STATE_FINISH       = 3'd1;
 	localparam STATE_DMA_RD_DW1_0 = 3'd2;
 	localparam STATE_DMA_RD_DW3_2 = 3'd3;
-	localparam STATE_RX_DW3_2     = 3'd4;
-	localparam STATE_WR_FIFO      = 3'd5;
+	localparam STATE_RX_DW1_0     = 3'd4;
+	localparam STATE_RX_DW3_2     = 3'd5;
+	localparam STATE_WR_FIFO      = 3'd6;
 	localparam STATE_ERROR        = 3'b111;
 	localparam STATE_BITS         = 3;
 
@@ -98,15 +96,16 @@ module tlp_xdma_desc_rd #(
 	reg [15:0]           desc_adj_int;
 
 	// RX TLP DW1_0
-	wire [6:0]  rx_tlp_hdr_fmt_type;
-	wire [2:0]  rx_tlp_hdr_tc;
-	wire        rx_tlp_hdr_td;
-	wire        rx_tlp_hdr_ep;
-	wire [1:0]  rx_tlp_hdr_attr;
-	wire [9:0]  rx_tlp_hdr_len;
-	wire [15:0] rx_tlp_hdr_rid;
-	wire [7:0]  rx_tlp_hdr_tag;
-	wire [7:0]  rx_tlp_hdr_be;
+	reg [C_DATA_WIDTH-1:0] rx_tlp_hdr_dw1_0;
+	wire [6:0]             rx_tlp_hdr_fmt_type;
+	wire [2:0]             rx_tlp_hdr_tc;
+	wire                   rx_tlp_hdr_td;
+	wire                   rx_tlp_hdr_ep;
+	wire [1:0]             rx_tlp_hdr_attr;
+	wire [9:0]             rx_tlp_hdr_len;
+	wire [15:0]            rx_tlp_hdr_rid;
+	wire [7:0]             rx_tlp_hdr_tag;
+	wire [7:0]             rx_tlp_hdr_be;
 
 	// TX TLP DW1_0
 	wire [6:0] tlp_hdr_fmt_type;
@@ -144,20 +143,18 @@ module tlp_xdma_desc_rd #(
 	assign ap_done = (ap_state == STATE_FINISH);
 	assign ap_ready = ap_done;
 
-	assign probe0 = ap_state;
-
 	assign desc_addr_lo = {desc_addr_int[31:2], 2'b00};
 	assign desc_addr_hi = desc_addr_int[63:32];
 
-	assign rx_tlp_hdr_fmt_type = tlp_hdr_dw1_0[30:24];
-	assign rx_tlp_hdr_tc = tlp_hdr_dw1_0[22:20];
-	assign rx_tlp_hdr_td = tlp_hdr_dw1_0[15];
-	assign rx_tlp_hdr_ep = tlp_hdr_dw1_0[14];
-	assign rx_tlp_hdr_attr = tlp_hdr_dw1_0[13:12];
-	assign rx_tlp_hdr_len = tlp_hdr_dw1_0[9:0];
-	assign rx_tlp_hdr_rid = tlp_hdr_dw1_0[63:48];
-	assign rx_tlp_hdr_tag = tlp_hdr_dw1_0[47:40];
-	assign rx_tlp_hdr_be = tlp_hdr_dw1_0[39:32];
+	assign rx_tlp_hdr_fmt_type = rx_tlp_hdr_dw1_0[30:24];
+	assign rx_tlp_hdr_tc = rx_tlp_hdr_dw1_0[22:20];
+	assign rx_tlp_hdr_td = rx_tlp_hdr_dw1_0[15];
+	assign rx_tlp_hdr_ep = rx_tlp_hdr_dw1_0[14];
+	assign rx_tlp_hdr_attr = rx_tlp_hdr_dw1_0[13:12];
+	assign rx_tlp_hdr_len = rx_tlp_hdr_dw1_0[9:0];
+	assign rx_tlp_hdr_rid = rx_tlp_hdr_dw1_0[63:48];
+	assign rx_tlp_hdr_tag = rx_tlp_hdr_dw1_0[47:40];
+	assign rx_tlp_hdr_be = rx_tlp_hdr_dw1_0[39:32];
 
 	assign tlp_hdr_fmt_type = (desc_addr_32bit ? TLP_MEM_RD32_FMT_TYPE : TLP_MEM_RD64_FMT_TYPE);
 	assign tlp_hdr_tc = 3'b0;
@@ -210,8 +207,14 @@ module tlp_xdma_desc_rd #(
 
 				STATE_DMA_RD_DW3_2: begin
 					if(m_axis_rr_desc_fire) begin
-						ap_state <= STATE_RX_DW3_2;
+						ap_state <= STATE_RX_DW1_0;
 						desc_inc <= 0;
+					end
+				end
+
+				STATE_RX_DW1_0: begin
+					if(s_axis_rc_desc_fire) begin
+						ap_state <= STATE_RX_DW3_2;
 					end
 				end
 
@@ -264,6 +267,21 @@ module tlp_xdma_desc_rd #(
 			if(|ERR_MASK) begin
 				ap_state <= STATE_ERROR;
 			end
+		end
+	end
+
+	// rx_tlp_hdr_dw1_0
+	always @(posedge clk or negedge rst_n) begin
+		if(~rst_n) begin
+			rx_tlp_hdr_dw1_0 <= 0;
+		end else begin
+			case(ap_state)
+				STATE_RX_DW1_0: begin
+					if(s_axis_rc_desc_fire) begin
+						rx_tlp_hdr_dw1_0 <= s_axis_rc_desc_tdata;
+					end
+				end
+			endcase
 		end
 	end
 

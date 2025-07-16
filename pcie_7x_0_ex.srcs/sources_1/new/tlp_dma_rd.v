@@ -73,13 +73,13 @@ module tlp_dma_rd #(
 	input                              m00_axis_tready,
 	output                             m00_axis_tuser,
 
-	input [15:0]             cfg_completer_id,
-	input [C_DATA_WIDTH-1:0] tlp_hdr_dw1_0,
+	input [15:0] cfg_completer_id,
 
 	// ap params
-	input [63:0] buf_addr,
-	input [31:0] size,
-	input [31:0] times,
+	input [63:0]      DESC_ADDR,
+	input [31:0]      DESC_ADJ,
+	input [31:0]      SIZE,
+	output reg [31:0] ERR_MASK,
 
 	// ap ctrl
 	input  ap_start,
@@ -87,6 +87,8 @@ module tlp_dma_rd #(
 	output ap_ready,
 	output ap_idle
 );
+	`include "err_mask.vh"
+
 	localparam TLP_MEM_RD32_FMT_TYPE = 7'b00_00000;
 	localparam TLP_MEM_RD64_FMT_TYPE = 7'b01_00000;
 
@@ -97,35 +99,36 @@ module tlp_dma_rd #(
 	localparam BURST_SIZE  = 256; // bytes per burst
 	localparam BURST_WIDTH = $clog2(BURST_SIZE + 1);
 
-	localparam MAX_SIZE   = 4096;
+	localparam MAX_SIZE   = 4096 * 2160 * 4;
 	localparam SIZE_WIDTH = $clog2(MAX_SIZE + 1);
 
-	localparam MAX_TIMES   = 4320;
-	localparam TIMES_WIDTH = $clog2(MAX_TIMES + 1);
+	localparam DESC_WIDTH = 32+32+32; // {bytes, addr_hi, addr_lo}
 
-	localparam STATE_IDLE            = 4'd0;
-	localparam STATE_FINISH          = 4'd1;
-	localparam STATE_DMA_RD_DW1_0    = 4'd2;
-	localparam STATE_DMA_RD_DW3_2    = 4'd3;
-	localparam STATE_DMA_RD          = 4'd5;
-	localparam STATE_DMA_RD_NEXT     = 4'd6;
-	localparam STATE_WAIT_PENDING    = 4'd7;
-	localparam STATE_BITS            = 4;
+	localparam STATE_IDLE         = 4'd0;
+	localparam STATE_FINISH       = 4'd1;
+	localparam STATE_DMA_RD_DW1_0 = 4'd2;
+	localparam STATE_DMA_RD_DW3_2 = 4'd3;
+	localparam STATE_WAIT_DESC    = 4'd4;
+	localparam STATE_DMA_RD       = 4'd5;
+	localparam STATE_DMA_RD_NEXT  = 4'd6;
+	localparam STATE_WAIT_PENDING = 4'd7;
+	localparam STATE_ERROR        = 4'b1111;
+	localparam STATE_BITS         = 4;
 
 	genvar gen_i;
 	integer i;
 
 	reg [STATE_BITS-1:0]   ap_state;
+	reg [31:0]             ERR_MASK_next;
 	reg [63:0]             buf_addr_int;
 	wire [63:0]            buf_addr_next;
 	reg [SIZE_WIDTH-1:0]   addr_adder_inc;
+	reg [31:0]             buf_size_int, buf_size_next;
 	reg                    buf_addr_32bit;
 	wire [31:0]            buf_addr_lo;
 	wire [31:0]            buf_addr_hi;
 	reg [SIZE_WIDTH-1:0]   size_int, size_next;
-	reg [TIMES_WIDTH-1:0]  times_int;
 	reg [BURST_WIDTH-1:0]  burst_bytes_int;
-	wire [31:0]            size_4x;
 
 	wire m_axis_rr_fire;
 
@@ -151,21 +154,64 @@ module tlp_dma_rd #(
 	wire [3:0] tlp_hdr_last_be;
 	wire [3:0] tlp_hdr_first_be;
 
-	// rc signals
-	reg [RC_CNT_WIDTH-1:0]         rc_req_idx;
-	reg [RC_COUNT*BURST_WIDTH-1:0] rc_burst_bytes;
-	reg [RC_COUNT-1:0]             rc_req;
-	wire [RC_COUNT-1:0]            rc_avail;
+	// dma_rd_burst_U signals
+	reg [RC_CNT_WIDTH-1:0]         dma_rd_burst_idx;
+	reg [RC_COUNT*BURST_WIDTH-1:0] dma_rd_burst_burst_bytes;
+	reg [RC_COUNT-1:0]             dma_rd_burst_req;
+	wire [RC_COUNT-1:0]            dma_rd_burst_avail;
+
+	// desc_rd_U signals
+	reg                   desc_rd_rd_en;
+	wire [DESC_WIDTH-1:0] desc_rd_rd_data;
+	wire                  desc_rd_data_valid;
+	reg                   desc_rd_ap_start;
+	wire                  desc_rd_ap_ready;
+	wire [31:0]           desc_rd_ERR_MASK;
 
 	assign ap_idle = (ap_state == STATE_IDLE);
 	assign ap_done = (ap_state == STATE_FINISH);
 	assign ap_ready = ap_done;
 
-	// TODO: RC/RR DESC handling
-	assign s_axis_rc_desc_tready = 0;
-	assign m_axis_rr_desc_tvalid = 0;
+	tlp_xdma_desc_rd #(
+		.C_DATA_WIDTH(C_DATA_WIDTH),
+		.C_RC_USER_WIDTH(C_RC_USER_WIDTH),
+		.C_RR_USER_WIDTH(C_RR_USER_WIDTH),
+		.C_RC_TAG(8'hF1), // tag base for tlp_demuxer/m01_axis_desc_rc
+		.C_DMA_DIR(1) // DMA_TO_DEVICE
+	) desc_rd_U(
+		.clk(clk),
+		.rst_n(rst_n),
 
-	assign size_4x = (size & ~32'b11);
+		.s_axis_rc_desc_tdata(s_axis_rc_desc_tdata),
+		.s_axis_rc_desc_tkeep(s_axis_rc_desc_tkeep),
+		.s_axis_rc_desc_tlast(s_axis_rc_desc_tlast),
+		.s_axis_rc_desc_tvalid(s_axis_rc_desc_tvalid),
+		.s_axis_rc_desc_tready(s_axis_rc_desc_tready),
+		.s_axis_rc_desc_tuser(s_axis_rc_desc_tuser),
+
+		.m_axis_rr_desc_tdata(m_axis_rr_desc_tdata),
+		.m_axis_rr_desc_tkeep(m_axis_rr_desc_tkeep),
+		.m_axis_rr_desc_tlast(m_axis_rr_desc_tlast),
+		.m_axis_rr_desc_tvalid(m_axis_rr_desc_tvalid),
+		.m_axis_rr_desc_tready(m_axis_rr_desc_tready),
+		.m_axis_rr_desc_tuser(m_axis_rr_desc_tuser),
+
+		.cfg_completer_id(cfg_completer_id),
+
+		.rd_en(desc_rd_rd_en),
+		.rd_data(desc_rd_rd_data),
+		.data_valid(desc_rd_data_valid),
+
+		.DESC_ADDR(DESC_ADDR),
+		.DESC_ADJ(DESC_ADJ),
+		.ERR_MASK(desc_rd_ERR_MASK),
+
+		.ap_start(desc_rd_ap_start),
+		.ap_done(),
+		.ap_ready(desc_rd_ap_ready),
+		.ap_idle()
+	);
+
 	assign buf_addr_lo = {buf_addr_int[31:2], 2'b00};
 	assign buf_addr_hi = buf_addr_int[63:32];
 
@@ -178,16 +224,6 @@ module tlp_dma_rd #(
 		.inc(addr_adder_inc),
 		.addr_next(buf_addr_next)
 	);
-
-	assign rx_tlp_hdr_fmt_type = tlp_hdr_dw1_0[30:24];
-	assign rx_tlp_hdr_tc = tlp_hdr_dw1_0[22:20];
-	assign rx_tlp_hdr_td = tlp_hdr_dw1_0[15];
-	assign rx_tlp_hdr_ep = tlp_hdr_dw1_0[14];
-	assign rx_tlp_hdr_attr = tlp_hdr_dw1_0[13:12];
-	assign rx_tlp_hdr_len = tlp_hdr_dw1_0[9:0];
-	assign rx_tlp_hdr_rid = tlp_hdr_dw1_0[63:48];
-	assign rx_tlp_hdr_tag = tlp_hdr_dw1_0[47:40];
-	assign rx_tlp_hdr_be = tlp_hdr_dw1_0[39:32];
 
 	assign tlp_hdr_fmt_type = (buf_addr_32bit ? TLP_MEM_RD32_FMT_TYPE : TLP_MEM_RD64_FMT_TYPE);
 	assign tlp_hdr_tc = 3'b0;
@@ -213,42 +249,91 @@ module tlp_dma_rd #(
 			case(ap_state)
 				STATE_IDLE:
 					if(ap_start) begin
-						ap_state <= STATE_DMA_RD_NEXT;
+						ap_state <= STATE_WAIT_DESC;
 					end
 
-				STATE_DMA_RD_DW1_0:
-					if(rc_avail[rc_req_idx]) begin
+				STATE_WAIT_DESC: begin
+					if(desc_rd_data_valid) begin
+						ap_state <= STATE_DMA_RD_NEXT;
+					end
+				end
+
+				STATE_DMA_RD_DW1_0: begin
+					if(dma_rd_burst_avail[dma_rd_burst_idx]) begin
 						if(m_axis_rr_fire) begin
 							ap_state <= STATE_DMA_RD_DW3_2;
 						end
 					end
+				end
 
 				STATE_DMA_RD_DW3_2:
 					if(m_axis_rr_fire) begin
 						ap_state <= STATE_DMA_RD;
 					end
 
-				STATE_DMA_RD:
-					if(size_next == 0 && times_int == 1) begin
+				STATE_DMA_RD: begin
+					ap_state <= STATE_DMA_RD_NEXT;
+
+					if(size_next == 0) begin
 						ap_state <= STATE_WAIT_PENDING;
-					end else begin
-						ap_state <= STATE_DMA_RD_NEXT;
+					end else if(buf_size_next == 0) begin
+						ap_state <= STATE_WAIT_DESC;
 					end
+				end
 
 				STATE_DMA_RD_NEXT: begin
 					ap_state <= STATE_DMA_RD_DW1_0;
 				end
 
-				STATE_WAIT_PENDING:
-					if(&rc_avail) begin
+				STATE_WAIT_PENDING: begin
+					if(&dma_rd_burst_avail) begin
 						ap_state <= STATE_FINISH;
 					end
+				end
 
 				STATE_FINISH: begin
 					ap_state <= STATE_IDLE;
 				end
 			endcase
+
+			if(|ERR_MASK) begin
+				ap_state <= STATE_ERROR;
+			end
 		end
+	end
+
+	// @FF desc_rd_ap_start
+	always @(posedge clk or negedge rst_n) begin
+		if(~rst_n) begin
+			desc_rd_ap_start <= 0;
+		end else begin
+			case(ap_state)
+				STATE_IDLE: begin
+					if(ap_start) begin
+						desc_rd_ap_start <= 1;
+					end
+				end
+
+				default: begin
+					if(desc_rd_ap_ready) begin
+						desc_rd_ap_start <= 0;
+					end
+				end
+			endcase
+		end
+	end
+
+	// @COMB desc_rd_rd_en
+	always @(*) begin
+		desc_rd_rd_en = 0;
+
+		case(ap_state)
+			STATE_WAIT_DESC: begin
+				if(desc_rd_data_valid) begin
+					desc_rd_rd_en = 1;
+				end
+			end
+		endcase
 	end
 
 	// @COMB m_axis_rr_tdata, @COMB m_axis_rr_tkeep, @COMB m_axis_rr_tlast, @COMB m_axis_rr_tvalid
@@ -260,12 +345,12 @@ module tlp_dma_rd #(
 
 		case(ap_state)
 			STATE_DMA_RD_DW1_0:
-				if(rc_avail[rc_req_idx]) begin
+				if(dma_rd_burst_avail[dma_rd_burst_idx]) begin
 					m_axis_rr_tlast = 0;
 					m_axis_rr_tdata = {           // Bits
 						// DW1
 						cfg_completer_id,         // 16
-						tlp_hdr_tag[rc_req_idx],  // 8
+						tlp_hdr_tag[dma_rd_burst_idx],  // 8
 						tlp_hdr_last_be,          // 4
 						tlp_hdr_first_be,         // 4
 						// DW0
@@ -315,42 +400,41 @@ module tlp_dma_rd #(
 	assign m_axis_rr_tuser[3] = 1'b0; // Unused discontinue
 	assign m_axis_rr_fire = m_axis_rr_tready && m_axis_rr_tvalid;
 
-	// @FF buf_addr_int, @FF buf_addr_32bit, @FF addr_adder_inc, @FF size_int, @FF size_next, @FF times_int, @FF burst_bytes_int, @FF rc_req_idx
+	// @FF buf_addr_int, @FF buf_addr_32bit, @FF addr_adder_inc, @FF size_int, @FF size_next,
+	// @FF buf_size_int, @FF buf_size_next, @FF burst_bytes_int
 	always @(posedge clk or negedge rst_n) begin
 		if(~rst_n) begin
-			buf_addr_int <= 0;
+			buf_addr_int <= 'hCAFE0001; // for debug purpose
 			buf_addr_32bit <= 0;
 			addr_adder_inc <= 0;
 			size_int <= 0;
 			size_next <= 0;
-			times_int <= 0;
+			buf_size_int <= 'hCAFE0002; // for debug purpose
+			buf_size_next <= 0;
 			burst_bytes_int <= 0;
-			rc_req_idx <= RC_COUNT - 1;
 		end else begin
 			case(ap_state)
-				STATE_IDLE:
+				STATE_IDLE: begin
 					if(ap_start) begin
-						buf_addr_int <= buf_addr;
-						buf_addr_32bit <= (buf_addr[63:32] == 32'b0);
-						size_int <= size_4x;
-						times_int <= times;
+						size_int <= (SIZE & ~32'b11);
 					end
+				end
+
+				STATE_WAIT_DESC: begin
+					if(desc_rd_data_valid) begin
+						buf_addr_int <= desc_rd_rd_data[63:0];
+						buf_addr_32bit <= (desc_rd_rd_data[63:32] == 32'b0);
+						buf_size_int <= desc_rd_rd_data[64 +: 32];
+					end
+				end
 
 				STATE_DMA_RD: begin
 					buf_addr_int <= buf_addr_next;
 					size_int <= size_next;
-
-					if(size_next == 0) begin
-						times_int <= times_int - 1;
-
-						buf_addr_int <= buf_addr;
-						size_int <= size_4x;
-					end
+					buf_size_int <= buf_size_next;
 				end
 
 				STATE_DMA_RD_NEXT: begin
-					rc_req_idx <= (rc_req_idx == RC_COUNT - 1) ? 0 : rc_req_idx + 1;
-
 					if(size_int > BURST_SIZE) begin
 						addr_adder_inc <= BURST_SIZE;
 						size_next <= size_int - BURST_SIZE;
@@ -371,7 +455,7 @@ module tlp_dma_rd #(
 		.C_RC_COUNT(RC_COUNT),
 		.C_RC_CNT_WIDTH(RC_CNT_WIDTH),
 		.C_BURST_SIZE(BURST_SIZE)
-	) tlp_dma_rd_burst_U(
+	) dma_rd_burst_U(
 		.clk(clk),
 		.rst_n(rst_n),
 
@@ -382,32 +466,67 @@ module tlp_dma_rd #(
 		.s_axis_rc_tready(s_axis_rc_tready),
 		.s_axis_rc_tuser(s_axis_rc_tuser),
 
-		.rc_burst_bytes(rc_burst_bytes),
-		.rc_req(rc_req),
-		.rc_avail(rc_avail)
+		.burst_bytes(dma_rd_burst_burst_bytes),
+		.req(dma_rd_burst_req),
+		.avail(dma_rd_burst_avail)
 	);
 
-	// @FF rc_req[*], @FF rc_burst_bytes[*]
+	// @FF dma_rd_burst_idx
+	always @(posedge clk or negedge rst_n) begin
+		if(~rst_n) begin
+			dma_rd_burst_idx <= RC_COUNT - 1;
+		end else begin
+			case(ap_state)
+				STATE_DMA_RD_NEXT: begin
+					dma_rd_burst_idx <= (dma_rd_burst_idx == RC_COUNT - 1) ? 0 : dma_rd_burst_idx + 1;
+				end
+			endcase
+		end
+	end
+
+	// @FF dma_rd_burst_req[*], @FF dma_rd_burst_burst_bytes[*]
 	always @(posedge clk or negedge rst_n) begin
 		if(~rst_n) begin
 			for(i = 0;i < RC_COUNT;i = i + 1) begin
-				rc_req[i] <= 0;
-				rc_burst_bytes[i*BURST_WIDTH +: BURST_WIDTH] <= 0;
+				dma_rd_burst_req[i] <= 0;
+				dma_rd_burst_burst_bytes[i*BURST_WIDTH +: BURST_WIDTH] <= 0;
 			end
 		end else begin
 			case(ap_state)
 				STATE_DMA_RD_DW1_0:
-					if(rc_avail[rc_req_idx]) begin
+					if(dma_rd_burst_avail[dma_rd_burst_idx]) begin
 						if(m_axis_rr_fire) begin
-							rc_req[rc_req_idx] <= 1;
-							rc_burst_bytes[rc_req_idx*BURST_WIDTH +: BURST_WIDTH] <= burst_bytes_int;
+							dma_rd_burst_req[dma_rd_burst_idx] <= 1;
+							dma_rd_burst_burst_bytes[dma_rd_burst_idx*BURST_WIDTH +: BURST_WIDTH] <= burst_bytes_int;
 						end
 					end
 
 				STATE_DMA_RD_DW3_2: begin
-					rc_req[rc_req_idx] <= 0;
+					dma_rd_burst_req[dma_rd_burst_idx] <= 0;
 				end
 			endcase
 		end
+	end
+
+	// @FF ERR_MASK
+	always @(posedge clk or negedge rst_n) begin
+		if(~rst_n) begin
+			ERR_MASK <= ERR_MASK_SUCCESS;
+		end else begin
+			ERR_MASK <= ERR_MASK_next;
+		end
+	end
+
+	// @COMB ERR_MASK_next
+	always @(*) begin
+		ERR_MASK_next = ERR_MASK | desc_rd_ERR_MASK;
+
+		case(ap_state)
+			STATE_DMA_RD_NEXT: begin
+				if(buf_size_int > size_int) begin
+					ERR_MASK_next = ERR_MASK_next | ERR_MASK_BUF_SIZE;
+				end
+			end
+		endcase
 	end
 endmodule

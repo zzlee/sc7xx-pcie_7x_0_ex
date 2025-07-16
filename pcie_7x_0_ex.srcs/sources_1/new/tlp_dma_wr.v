@@ -72,16 +72,7 @@ module tlp_dma_wr #(
 	output                       s01_axis_tready,
 	input                        s01_axis_tuser,
 
-	input [15:0]             cfg_completer_id,
-	input [C_DATA_WIDTH-1:0] tlp_hdr_dw1_0,
-
-	output [96-1:0] probe0,
-	output [0:0]    probe1,
-	output [63:0]   probe2,
-	output [31:0]   probe3,
-	output [2:0]    probe4,
-	output [2:0]    probe5,
-	output [31:0]   probe6,
+	input [15:0] cfg_completer_id,
 
 	// ap params
 	input [63:0]      DESC_ADDR,
@@ -106,7 +97,7 @@ module tlp_dma_wr #(
 	localparam MAX_SIZE   = 4096 * 2160 * 4;
 	localparam SIZE_WIDTH = $clog2(MAX_SIZE + 1);
 
-	localparam DESC_WIDTH = 32+32+32;
+	localparam DESC_WIDTH = 32+32+32; // {bytes, addr_hi, addr_lo}
 
 	localparam STATE_IDLE         = 3'd0;
 	localparam STATE_FINISH       = 3'd1;
@@ -140,22 +131,10 @@ module tlp_dma_wr #(
 	reg [SIZE_WIDTH-1:0]    addr_adder_inc;
 	reg [31:0]              buf_size_int, buf_size_next;
 	reg [SIZE_WIDTH-1:0]    size_int, size_next;
-	wire [31:0]             size_4x;
 	reg [BURST_WIDTH-1:0]   burst_bytes_int;
 	reg [SRC_CNT_WIDTH-1:0] src_sel;
 
 	wire m_axis_rr_fire;
-
-	// RX TLP DW1_DW0
-	wire [6:0]  rx_tlp_hdr_fmt_type;
-	wire [2:0]  rx_tlp_hdr_tc;
-	wire        rx_tlp_hdr_td;
-	wire        rx_tlp_hdr_ep;
-	wire [1:0]  rx_tlp_hdr_attr;
-	wire [9:0]  rx_tlp_hdr_len;
-	wire [15:0] rx_tlp_hdr_rid;
-	wire [7:0]  rx_tlp_hdr_tag;
-	wire [7:0]  rx_tlp_hdr_be;
 
 	wire [7:0] tlp_hdr_tag;
 	wire [3:0] tlp_hdr_last_be;
@@ -194,13 +173,6 @@ module tlp_dma_wr #(
 	assign ap_done = (ap_state == STATE_FINISH);
 	assign ap_ready = ap_done;
 
-	assign probe0 = desc_rd_rd_data;
-	assign probe1 = desc_rd_data_valid;
-	assign probe2 = buf_addr_int;
-	assign probe3 = buf_size_int;
-	assign probe4 = ap_state;
-	assign probe6 = ERR_MASK;
-
 	tlp_xdma_desc_rd #(
 		.C_DATA_WIDTH(C_DATA_WIDTH),
 		.C_RC_USER_WIDTH(C_RC_USER_WIDTH),
@@ -226,9 +198,6 @@ module tlp_dma_wr #(
 		.m_axis_rr_desc_tuser(m_axis_rr_desc_tuser),
 
 		.cfg_completer_id(cfg_completer_id),
-		.tlp_hdr_dw1_0(tlp_hdr_dw1_0),
-
-		.probe0(probe5),
 
 		.rd_en(desc_rd_rd_en),
 		.rd_data(desc_rd_rd_data),
@@ -252,16 +221,6 @@ module tlp_dma_wr #(
 	assign s01_axis_tready = s_axis_tready[1];
 	assign s_axis_tvalid[1] = s01_axis_tvalid;
 
-	assign rx_tlp_hdr_fmt_type = tlp_hdr_dw1_0[30:24];
-	assign rx_tlp_hdr_tc = tlp_hdr_dw1_0[22:20];
-	assign rx_tlp_hdr_td = tlp_hdr_dw1_0[15];
-	assign rx_tlp_hdr_ep = tlp_hdr_dw1_0[14];
-	assign rx_tlp_hdr_attr = tlp_hdr_dw1_0[13:12];
-	assign rx_tlp_hdr_len = tlp_hdr_dw1_0[9:0];
-	assign rx_tlp_hdr_rid = tlp_hdr_dw1_0[63:48];
-	assign rx_tlp_hdr_tag = tlp_hdr_dw1_0[47:40];
-	assign rx_tlp_hdr_be = tlp_hdr_dw1_0[39:32];
-
 	assign tlp_hdr_tag = 8'd0; // Don't care
 	assign tlp_hdr_last_be = 4'b1111;
 	assign tlp_hdr_first_be = 4'b1111;
@@ -272,7 +231,6 @@ module tlp_dma_wr #(
 	assign tlp_hdr_attr = 2'b0;
 	assign tlp_hdr_len = (burst_bytes_int >> 2); // measured by DW unit
 
-	assign size_4x = (SIZE & ~32'b11);
 	assign buf_addr_lo = {buf_addr_int[31:2], 2'b00};
 	assign buf_addr_hi = buf_addr_int[63:32];
 
@@ -468,7 +426,7 @@ module tlp_dma_wr #(
 			case(ap_state)
 				STATE_IDLE: begin
 					if(ap_start) begin
-						size_int <= size_4x;
+						size_int <= (SIZE & ~32'b11);
 					end
 				end
 

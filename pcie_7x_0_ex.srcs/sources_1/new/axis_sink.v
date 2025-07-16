@@ -55,7 +55,7 @@ module axis_sink # (
 
 	assign ap_idle = (state_reg == STATE_IDLE);
 	assign ap_done = (state_reg == STATE_FINISH);
-	assign ap_ready = 0;
+	assign ap_ready = ap_done;
 
 	assign t_fire = s_axis_tvalid && s_axis_tready;
 	assign s_axis_tready = (state_reg == STATE_START);

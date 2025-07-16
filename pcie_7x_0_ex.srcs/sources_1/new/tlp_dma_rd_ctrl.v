@@ -47,9 +47,10 @@ module tlp_dma_rd_ctrl #(
     input                             s_axi_ctrl_rready,
 
     output        interrupt,
-    output [63:0] buf_addr,
-    output [31:0] size,
-    output [31:0] times,
+    output [63:0] DESC_ADDR,
+    output [31:0] DESC_ADJ,
+    output [31:0] SIZE,
+    input [31:0]  ERR_MASK,
 
     output ap_start,
     input  ap_done,
@@ -81,15 +82,16 @@ module tlp_dma_rd_ctrl #(
 
 //------------------------Parameter----------------------
 localparam
-    ADDR_AP_CTRL    = 6'h00,
-    ADDR_GIE        = 6'h04,
-    ADDR_IER        = 6'h08,
-    ADDR_ISR        = 6'h0c,
-    ADDR_BUF_ADDR_0 = 6'h10,
-    ADDR_BUF_ADDR_1 = 6'h14,
-    ADDR_SIZE       = 6'h18,
-    ADDR_TIMES      = 6'h1C,
-    ADDR_BITS       = 6;
+    ADDR_AP_CTRL      = 6'h00,
+    ADDR_GIE          = 6'h04,
+    ADDR_IER          = 6'h08,
+    ADDR_ISR          = 6'h0c,
+    ADDR_DESC_ADDR_LO = 6'h10,
+    ADDR_DESC_ADDR_HI = 6'h14,
+    ADDR_DESC_ADJ     = 6'h18,
+    ADDR_SIZE         = 6'h1C,
+    ADDR_ERR_MASK     = 6'h20,
+    ADDR_BITS         = 6;
 
 localparam
     WRIDLE              = 2'd0,
@@ -148,9 +150,9 @@ localparam
     reg                           int_gie = 1'b0;
     reg  [1:0]                    int_ier = 2'b0;
     reg  [1:0]                    int_isr = 2'b0;
-    reg  [63:0]                   int_buf_addr = 'b0;
-    reg  [31:0]                   int_size = 'b0;
-    reg  [31:0]                   int_times = 'b0;
+    reg  [63:0]                   int_DESC_ADDR = 'b0;
+    reg  [31:0]                   int_DESC_ADJ = 'b0;
+    reg  [31:0]                   int_SIZE = 'b0;
 
 //------------------------Instantiation------------------
 assign ACLK_EN = 1;
@@ -279,17 +281,20 @@ always @(posedge ACLK) begin
                 ADDR_ISR: begin
                     rdata <= int_isr;
                 end
-                ADDR_BUF_ADDR_0: begin
-                    rdata <= int_buf_addr[31:0];
+                ADDR_DESC_ADDR_LO: begin
+                    rdata <= int_DESC_ADDR[31:0];
                 end
-                ADDR_BUF_ADDR_1: begin
-                    rdata <= int_buf_addr[63:32];
+                ADDR_DESC_ADDR_HI: begin
+                    rdata <= int_DESC_ADDR[63:32];
+                end
+                ADDR_DESC_ADJ: begin
+                    rdata <= int_DESC_ADJ[31:0];
                 end
                 ADDR_SIZE: begin
-                    rdata <= int_size[31:0];
+                    rdata <= int_SIZE[31:0];
                 end
-                ADDR_TIMES: begin
-                    rdata <= int_times[31:0];
+                ADDR_ERR_MASK: begin
+                    rdata <= ERR_MASK[31:0];
                 end
             endcase
         end
@@ -303,9 +308,10 @@ assign ap_start          = int_ap_start;
 assign task_ap_done      = (ap_done && !auto_restart_status) || auto_restart_done;
 assign task_ap_ready     = ap_ready && !int_auto_restart;
 assign auto_restart_done = auto_restart_status && (ap_idle && !int_ap_idle);
-assign buf_addr          = int_buf_addr;
-assign size              = int_size;
-assign times             = int_times;
+assign DESC_ADDR         = int_DESC_ADDR;
+assign DESC_ADJ          = int_DESC_ADJ;
+assign SIZE              = int_SIZE;
+
 // int_interrupt
 always @(posedge ACLK) begin
     if (ARESET)
@@ -438,43 +444,43 @@ always @(posedge ACLK) begin
     end
 end
 
-// int_buf_addr[31:0]
+// int_DESC_ADDR[31:0]
 always @(posedge ACLK) begin
     if (ARESET)
-        int_buf_addr[31:0] <= 0;
+        int_DESC_ADDR[31:0] <= 0;
     else if (ACLK_EN) begin
-        if (w_hs && waddr == ADDR_BUF_ADDR_0)
-            int_buf_addr[31:0] <= (WDATA[31:0] & wmask) | (int_buf_addr[31:0] & ~wmask);
+        if (w_hs && waddr == ADDR_DESC_ADDR_LO)
+            int_DESC_ADDR[31:0] <= (WDATA[31:0] & wmask) | (int_DESC_ADDR[31:0] & ~wmask);
     end
 end
 
-// int_buf_addr[63:32]
+// int_DESC_ADDR[63:32]
 always @(posedge ACLK) begin
     if (ARESET)
-        int_buf_addr[63:32] <= 0;
+        int_DESC_ADDR[63:32] <= 0;
     else if (ACLK_EN) begin
-        if (w_hs && waddr == ADDR_BUF_ADDR_1)
-            int_buf_addr[63:32] <= (WDATA[31:0] & wmask) | (int_buf_addr[63:32] & ~wmask);
+        if (w_hs && waddr == ADDR_DESC_ADDR_HI)
+            int_DESC_ADDR[63:32] <= (WDATA[31:0] & wmask) | (int_DESC_ADDR[63:32] & ~wmask);
     end
 end
 
-// int_size[31:0]
+// int_DESC_ADJ[31:0]
 always @(posedge ACLK) begin
     if (ARESET)
-        int_size[31:0] <= 0;
+        int_DESC_ADJ[31:0] <= 0;
+    else if (ACLK_EN) begin
+        if (w_hs && waddr == ADDR_DESC_ADJ)
+            int_DESC_ADJ[31:0] <= (WDATA[31:0] & wmask) | (int_DESC_ADJ[31:0] & ~wmask);
+    end
+end
+
+// int_SIZE[31:0]
+always @(posedge ACLK) begin
+    if (ARESET)
+        int_SIZE[31:0] <= 0;
     else if (ACLK_EN) begin
         if (w_hs && waddr == ADDR_SIZE)
-            int_size[31:0] <= (WDATA[31:0] & wmask) | (int_size[31:0] & ~wmask);
-    end
-end
-
-// int_times[31:0]
-always @(posedge ACLK) begin
-    if (ARESET)
-        int_times[31:0] <= 0;
-    else if (ACLK_EN) begin
-        if (w_hs && waddr == ADDR_TIMES)
-            int_times[31:0] <= (WDATA[31:0] & wmask) | (int_times[31:0] & ~wmask);
+            int_SIZE[31:0] <= (WDATA[31:0] & wmask) | (int_SIZE[31:0] & ~wmask);
     end
 end
 

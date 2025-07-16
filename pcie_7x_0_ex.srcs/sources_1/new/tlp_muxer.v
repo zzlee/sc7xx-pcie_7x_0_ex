@@ -70,15 +70,15 @@ module tlp_muxer #(
 	input [C_USER_WIDTH-1:0] s04_axis_tuser,
 
 	// Output
-	output [C_DATA_WIDTH-1:0] m_axis_tdata,
-	output [KEEP_WIDTH-1:0]   m_axis_tkeep,
-	output                    m_axis_tlast,
-	output                    m_axis_tvalid,
-	input                     m_axis_tready,
-	output [C_USER_WIDTH-1:0] m_axis_tuser
+	output reg [C_DATA_WIDTH-1:0] m_axis_tdata,
+	output reg [KEEP_WIDTH-1:0]   m_axis_tkeep,
+	output reg                    m_axis_tlast,
+	output reg                    m_axis_tvalid,
+	input                         m_axis_tready,
+	output reg [C_USER_WIDTH-1:0] m_axis_tuser
 );
-
 	localparam SRC_COUNT = 5;
+	integer i;
 
 	reg [SRC_COUNT-1:0]          slaves_arb_input_unencoded_reg;
 	wire                         slaves_arb_output_valid;
@@ -89,7 +89,7 @@ module tlp_muxer #(
 	wire [KEEP_WIDTH-1:0]   s_axis_tkeep [SRC_COUNT-1:0];
 	wire                    s_axis_tlast [SRC_COUNT-1:0];
 	wire [SRC_COUNT-1:0]    s_axis_tvalid;
-	wire                    s_axis_tready [SRC_COUNT-1:0];
+	reg                     s_axis_tready [SRC_COUNT-1:0];
 	wire [C_USER_WIDTH-1:0] s_axis_tuser [SRC_COUNT-1:0];
 
 	wire m_axis_fire;
@@ -143,20 +143,18 @@ module tlp_muxer #(
 
 	assign m_axis_fire = m_axis_tvalid && m_axis_tready;
 
-	generate
-		genvar i;
-
+	// @COMB s_axis_tready[i]
+	always @(*) begin
 		for (i = 0; i < SRC_COUNT; i = i + 1) begin
-			assign s_axis_tready[i] = ((slaves_arb_output_valid && slaves_arb_output_encoded == i) ? m_axis_tready : 0);
+			s_axis_tready[i] = 0;
 		end
-	endgenerate
 
-	assign m_axis_tdata = slaves_arb_output_valid ? s_axis_tdata[slaves_arb_output_encoded] : 'hCAFECAFEABCDABCD; // for debug purpose
-	assign m_axis_tkeep = slaves_arb_output_valid ? s_axis_tkeep[slaves_arb_output_encoded] : 0;
-	assign m_axis_tlast = slaves_arb_output_valid ? s_axis_tlast[slaves_arb_output_encoded] : 0;
-	assign m_axis_tuser = slaves_arb_output_valid ? s_axis_tuser[slaves_arb_output_encoded] : 0;
-	assign m_axis_tvalid = (slaves_arb_output_valid ? s_axis_tvalid[slaves_arb_output_encoded] : 0);
+		if(slaves_arb_output_valid) begin
+			s_axis_tready[slaves_arb_output_encoded] = m_axis_tready;
+		end
+	end
 
+	// @FF slaves_arb_input_unencoded_reg
 	always @(posedge clk or negedge rst_n) begin
 		if(~rst_n) begin
 			slaves_arb_input_unencoded_reg <= 0;
@@ -171,4 +169,20 @@ module tlp_muxer #(
 		end
 	end
 
+	// @COMB m_axis_tdata, @COMB m_axis_tkeep, @COMB m_axis_tlast, @COMB m_axis_tuser, @COMB m_axis_tvalid
+	always @(*) begin
+		if(slaves_arb_output_valid) begin
+			m_axis_tdata = s_axis_tdata[slaves_arb_output_encoded];
+			m_axis_tkeep = s_axis_tkeep[slaves_arb_output_encoded];
+			m_axis_tlast = s_axis_tlast[slaves_arb_output_encoded];
+			m_axis_tuser = s_axis_tuser[slaves_arb_output_encoded];
+			m_axis_tvalid = s_axis_tvalid[slaves_arb_output_encoded];
+		end else begin
+			m_axis_tdata = 'hCAFECAFEABCDABCD; // for debug purpose
+			m_axis_tkeep = 0;
+			m_axis_tlast = 0;
+			m_axis_tuser = 0;
+			m_axis_tvalid = 0;
+		end
+	end
 endmodule

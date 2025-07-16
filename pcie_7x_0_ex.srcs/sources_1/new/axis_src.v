@@ -60,7 +60,7 @@ module axis_src #(
 
 	assign ap_idle = (ap_state == STATE_IDLE);
 	assign ap_done = (ap_state == STATE_FINISH);
-	assign ap_ready = 0;
+	assign ap_ready = ap_done;
 
 	generate
 		for (i = 0; i < C_DATA_WIDTH / GEN_DATA_WIDTH; i = i + 1) begin

@@ -311,6 +311,7 @@ assign auto_restart_done = auto_restart_status && (ap_idle && !int_ap_idle);
 assign DESC_ADDR         = int_DESC_ADDR;
 assign DESC_ADJ          = int_DESC_ADJ;
 assign SIZE              = int_SIZE;
+
 // int_interrupt
 always @(posedge ACLK) begin
 	if (ARESET)

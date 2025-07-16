@@ -42,213 +42,109 @@ module tlp_dma_rd_burst #(
 	output reg                  s_axis_rc_tready,
 	input [C_RC_USER_WIDTH-1:0] s_axis_rc_tuser,
 
-	input [C_RC_COUNT*BURST_WIDTH-1:0] rc_burst_bytes,
-	input [C_RC_COUNT-1:0]             rc_req,
-	output [C_RC_COUNT-1:0]            rc_avail
+	// ap params
+	input [C_RC_COUNT*BURST_WIDTH-1:0] burst_bytes,
+	input [C_RC_COUNT-1:0]             req,
+	output [C_RC_COUNT-1:0]            avail
 );
 
-	localparam STATE_IDLE  = 2'd0;
-	localparam STATE_RECV  = 2'd1;
-	localparam STATE_LAST  = 2'd2;
-	localparam STATE_UNEXP = 2'd3;
-	localparam STATE_BITS  = 2;
-
-	localparam RC_STATE_IDLE  = 2'd0;
-	localparam RC_STATE_RECV  = 2'd1;
-	localparam RC_STATE_LAST  = 2'd2;
-	localparam RC_STATE_UNEXP = 2'd3;
-	localparam RC_STATE_BITS  = 2;
-
-	integer i;
 	genvar gen_i;
+	integer i;
 
-	reg [STATE_BITS-1:0]     ap_state;
-	reg [C_RC_CNT_WIDTH-1:0] rc_idx;
+	// fifo_dma_rd_U signals
+	wire [C_DATA_WIDTH-1:0]    fifo_s_axis_tdata [C_RC_COUNT-1:0];
+	wire [KEEP_WIDTH-1:0]      fifo_s_axis_tkeep [C_RC_COUNT-1:0];
+	wire                       fifo_s_axis_tlast [C_RC_COUNT-1:0];
+	wire                       fifo_s_axis_tvalid [C_RC_COUNT-1:0];
+	wire                       fifo_s_axis_tready [C_RC_COUNT-1:0];
+	wire [C_RC_USER_WIDTH-1:0] fifo_s_axis_tuser [C_RC_COUNT-1:0];
+	wire [C_DATA_WIDTH-1:0]    fifo_m_axis_tdata [C_RC_COUNT-1:0];
+	wire [KEEP_WIDTH-1:0]      fifo_m_axis_tkeep [C_RC_COUNT-1:0];
+	wire                       fifo_m_axis_tlast [C_RC_COUNT-1:0];
+	wire                       fifo_m_axis_tvalid [C_RC_COUNT-1:0];
+	wire                       fifo_m_axis_tready [C_RC_COUNT-1:0];
+	wire [C_RC_USER_WIDTH-1:0] fifo_m_axis_tuser [C_RC_COUNT-1:0];
 
-	wire s_axis_rc_fire;
-
-	reg [RC_STATE_BITS-1:0]    rc_state [C_RC_COUNT-1:0];
-	reg [BURST_WIDTH-1:0]      rc_burst_bytes_int [C_RC_COUNT-1:0];
-
-	wire [C_DATA_WIDTH-1:0]    rc_tdata [C_RC_COUNT-1:0];
-	wire [KEEP_WIDTH-1:0]      rc_tkeep [C_RC_COUNT-1:0];
-	wire                       rc_tlast [C_RC_COUNT-1:0];
-	reg                        rc_tvalid [C_RC_COUNT-1:0];
-	reg                        rc_tready [C_RC_COUNT-1:0];
-	wire [C_RC_USER_WIDTH-1:0] rc_tuser [C_RC_COUNT-1:0];
-	wire                       rc_fire [C_RC_COUNT-1:0];
-
-	reg [C_DATA_WIDTH-1:0] tdata_q;
-	reg [KEEP_WIDTH-1:0]   tkeep_q;
-	reg                    tlast_q;
-	reg                    tuser_q; // SOF
-
-	// @FF ap_state, @FF rc_idx
-	always @(posedge clk or negedge rst_n) begin
-		if(~rst_n) begin
-			ap_state <= STATE_IDLE;
-		end else begin
-			case(ap_state)
-				STATE_IDLE: begin
-					if(s_axis_rc_fire) begin
-						if(s_axis_rc_tdata[8 +: C_RC_CNT_WIDTH] < C_RC_COUNT) begin
-							ap_state <= STATE_RECV;
-							rc_idx <= s_axis_rc_tdata[8 +: C_RC_CNT_WIDTH];
-
-							if(s_axis_rc_tlast) begin
-								ap_state <= STATE_LAST;
-							end
-						end else begin
-							ap_state <= STATE_UNEXP;
-							if(s_axis_rc_tlast) begin
-								ap_state <= STATE_IDLE;
-							end
-						end
-					end
-				end
-
-				STATE_RECV: begin
-					if(s_axis_rc_fire) begin
-						if(s_axis_rc_tlast) begin
-							ap_state <= STATE_LAST;
-						end
-					end
-				end
-
-				STATE_LAST: begin
-					if(s_axis_rc_fire) begin
-						ap_state <= STATE_IDLE;
-					end
-				end
-
-				STATE_UNEXP: begin
-					if(s_axis_rc_fire) begin
-						if(s_axis_rc_tlast) begin
-							ap_state <= STATE_IDLE;
-						end
-					end
-				end
-			endcase
-		end
-	end
-
-	// @COMB s_axis_rc_tready
 	always @(*) begin
 		s_axis_rc_tready = 0;
-
-		case (ap_state)
-			STATE_IDLE: begin
-				s_axis_rc_tready = 1;
-			end
-
-			STATE_RECV: begin
-				s_axis_rc_tready = rc_tready[rc_idx];
-			end
-
-			STATE_UNEXP: begin
-				s_axis_rc_tready = 1;
-			end
-		endcase
-	end
-
-	assign s_axis_rc_fire = s_axis_rc_tready && s_axis_rc_tvalid;
-
-	// @FF tdata_q, @FF tkeep_q, @FF tlast_q, @FF tuser_q
-	always @(posedge clk or negedge rst_n) begin
-		if(~rst_n) begin
-			tdata_q <= 0;
-			tkeep_q <= 0;
-			tlast_q <= 0;
-			tuser_q <= 0;
-		end else begin
-			case(ap_state)
-				STATE_IDLE: begin
-					if(s_axis_rc_fire) begin
-						tdata_q <= s_axis_rc_tdata;
-						tkeep_q <= s_axis_rc_tkeep;
-						tlast_q <= s_axis_rc_tlast;
-						tuser_q <= 1;
-					end
-				end
-
-				STATE_RECV: begin
-					if(s_axis_rc_fire) begin
-						tdata_q <= s_axis_rc_tdata;
-						tkeep_q <= s_axis_rc_tkeep;
-						tlast_q <= s_axis_rc_tlast;
-						tuser_q <= 0;
-					end
-				end
-			endcase
-		end
-	end
-
-	// @FF rc_state[i], @FF rc_burst_bytes_int[i]
-	always @(posedge clk or negedge rst_n) begin
-		if(~rst_n) begin
-			for(i = 0;i < C_RC_COUNT;i = i + 1) begin
-				rc_state[i] <= RC_STATE_IDLE;
-				rc_burst_bytes_int[i] <= 0;
-			end
-		end else begin
-			for(i = 0;i < C_RC_COUNT;i = i + 1) begin
-				case(rc_state[i])
-					RC_STATE_IDLE: begin
-						if(rc_req[i]) begin
-							rc_state[i] <= RC_STATE_RECV;
-							rc_burst_bytes_int[i] <= rc_burst_bytes[i*BURST_WIDTH +: BURST_WIDTH];
-						end
-					end
-
-					RC_STATE_RECV: begin
-						if(rc_fire[i]) begin
-							if(rc_tlast[i]) begin
-								rc_state[i] <= RC_STATE_IDLE;
-							end
-						end
-					end
-				endcase
-			end
-		end
 	end
 
 	generate
 		for(gen_i = 0;gen_i < C_RC_COUNT;gen_i = gen_i + 1) begin
-			assign rc_tdata[gen_i] = tdata_q;
-			assign rc_tkeep[gen_i] = tkeep_q;
-			assign rc_tlast[gen_i] = tlast_q;
-			assign rc_tuser[gen_i] = tuser_q;
-			assign rc_fire[gen_i] = rc_tready[gen_i] && rc_tvalid[gen_i];
+			assign avail[gen_i] = 0;
 		end
 	endgenerate
 
-	// @COMB rc_tready[i]
-	always @(*) begin
-		rc_tready[i] = 0;
+	// generate
+	// 	for(gen_i = 0;gen_i < C_RC_COUNT;gen_i = gen_i + 1) begin
+	// 		fifo_dma_rd fifo_dma_rd_U(
+	// 			.s_aclk(clk),
+	// 			.s_aresetn(rst_n),
 
-		for(i = 0;i < C_RC_COUNT;i = i + 1) begin
-			case(rc_state[i])
-				RC_STATE_RECV: begin
-					rc_tready[i] = 1;
-				end
-			endcase
-		end
-	end
+	// 			.s_axis_tvalid(fifo_s_axis_tvalid),
+	// 			.s_axis_tready(fifo_s_axis_tready),
+	// 			.s_axis_tdata(fifo_s_axis_tdata),
+	// 			.s_axis_tkeep(fifo_s_axis_tkeep),
+	// 			.s_axis_tlast(fifo_s_axis_tlast),
+	// 			.s_axis_tuser(fifo_s_axis_tuser),
+	// 			.m_axis_tvalid(fifo_m_axis_tvalid),
+	// 			.m_axis_tready(fifo_m_axis_tready),
+	// 			.m_axis_tdata(fifo_m_axis_tdata),
+	// 			.m_axis_tkeep(fifo_m_axis_tkeep),
+	// 			.m_axis_tlast(fifo_m_axis_tlast),
+	// 			.m_axis_tuser(fifo_m_axis_tuser),
 
-	// @COMB rc_tvalid[i]
-	always @(*) begin
-		for(i = 0; i < C_RC_COUNT; i = i + 1) begin
-			rc_tvalid[i] = 0;
-		end
+	// 			.wr_rst_busy(),
+	// 			.rd_rst_busy()
+	// 		);
+	// 	end
+	// endgenerate
 
-		case(ap_state)
-			STATE_RECV: begin
-				rc_tvalid[rc_idx] = s_axis_rc_tvalid;
-			end
+	// always @(posedge clk or negedge rst_n) begin
+	// 	if(~rst_n) begin
+	// 		ap_state <= STATE_IDLE;
+	// 	end else begin
+	// 		case(ap_state)
+	// 			STATE_IDLE: begin
+	// 				ap_state <= STATE_RX_DW3_2;
+	// 			end
 
-			STATE_LAST: begin
-				rc_tvalid[rc_idx] = 1;
-			end
-		endcase
-	end
+	// 			STATE_RX_DW3_2: begin
+	// 				if(s_axis_rx_fire) begin
+	// 					if(s_axis_rx_tlast) begin
+	// 						ap_state <= STATE_RX_LAST;
+	// 					end
+	// 				end
+	// 			end
+
+	// 			STATE_RX: begin
+	// 				if(s_axis_rx_fire) begin
+	// 					if(s_axis_rx_tlast) begin
+	// 						ap_state <= STATE_RX_LAST;
+	// 					end
+	// 				end
+	// 			end
+
+	// 			STATE_RX_LAST: begin
+	// 				if(fifo_dma_rd_fire[rc_idx]) begin
+	// 					ap_state <= STATE_RX_DW3_2;
+	// 				end
+	// 			end
+	// 		endcase
+	// 	end
+	// end
+
+	// always @(posedge clk or negedge rst_n) begin
+	// 	if(~rst_n) begin
+	// 		rc_idx <= 0;
+	// 	end else begin
+	// 		case(ap_state)
+	// 			STATE_RX_DW3_2: begin
+	// 				if(s_axis_rx_fire) begin
+	// 					rc_idx <= s_axis_rc_tdata[8 +: C_RC_CNT_WIDTH];
+	// 				end
+	// 			end
+	// 		endcase
+	// 	end
+	// end
 endmodule

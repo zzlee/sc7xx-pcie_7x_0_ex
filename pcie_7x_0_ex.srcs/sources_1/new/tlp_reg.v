@@ -53,8 +53,7 @@ module tlp_reg #(
 	input                         m_axis_cc_tready,
 	output [C_CC_USER_WIDTH-1:0]  m_axis_cc_tuser,
 
-	input [15:0]             cfg_completer_id,
-	input [C_DATA_WIDTH-1:0] tlp_hdr_dw1_0,
+	input [15:0] cfg_completer_id,
 
 	output [C_CTRL_ADDR_WIDTH-1:0] m_axi_ctrl_awaddr,
 	output reg                     m_axi_ctrl_awvalid,
@@ -74,24 +73,30 @@ module tlp_reg #(
 	input                          m_axi_ctrl_rvalid,
 	output reg                     m_axi_ctrl_rready
 );
-
-	localparam STATE_IDLE     = 4'd0;
-	localparam STATE_RX_DW3_2 = 4'd2;
-	localparam STATE_TX_DW1_0 = 4'd3;
-	localparam STATE_TX_DW3_2 = 4'd4;
-	localparam STATE_CTRL_AW  = 4'd5;
-	localparam STATE_CTRL_W   = 4'd6;
-	localparam STATE_CTRL_B   = 4'd7;
-	localparam STATE_CTRL_AR  = 4'd8;
-	localparam STATE_CTRL_R   = 4'd9;
-	localparam STATE_BITS     = 4;
-
 	localparam TLP_MEM_RD32_FMT_TYPE = 7'b00_00000;
 	localparam TLP_MEM_WR32_FMT_TYPE = 7'b10_00000;
 	localparam TLP_CPLD_FMT_TYPE     = 7'b10_01010;
 
-	reg [STATE_BITS-1:0]   state_reg;
+	localparam STATE_IDLE  = 2'd0;
+	localparam STATE_RX_DW = 2'd1;
+	localparam STATE_TX_DW = 2'd2;
+	localparam STATE_CTRL  = 2'd3;
+	localparam STATE_WIDTH = 2;
+
+	localparam CTRL_STATE_IDLE  = 3'd0;
+	localparam CTRL_STATE_AW    = 3'd1;
+	localparam CTRL_STATE_W     = 3'd2;
+	localparam CTRL_STATE_B     = 3'd3;
+	localparam CTRL_STATE_AR    = 3'd4;
+	localparam CTRL_STATE_R     = 3'd5;
+	localparam CTRL_STATE_WIDTH = 3;
+
+	reg [STATE_WIDTH-1:0]  ap_state;
 	reg [C_DATA_WIDTH-1:0] ctrl_rx_data;
+	reg [0:0]              rx_dw_idx;
+	reg [C_DATA_WIDTH-1:0] rx_dw [1:0];
+	reg [0:0]              tx_dw_idx;
+	reg [3:0]              ctrl_state;
 
 	wire s_axis_cq_fire;
 	wire m_axis_cc_fire;
@@ -102,19 +107,20 @@ module tlp_reg #(
 	wire m_axi_ctrl_r_fire;
 
 	// TLP DW1_DW0
-	wire [6:0]  tlp_hdr_fmt_type;
-	wire [2:0]  tlp_hdr_tc;
-	wire        tlp_hdr_td;
-	wire        tlp_hdr_ep;
-	wire [1:0]  tlp_hdr_attr;
-	wire [9:0]  tlp_hdr_len;
-	wire [15:0] tlp_hdr_rid;
-	wire [7:0]  tlp_hdr_tag;
-	wire [7:0]  tlp_hdr_be;
+	wire [C_DATA_WIDTH-1:0] tlp_hdr_dw1_0;
+	wire [6:0]              tlp_hdr_fmt_type;
+	wire [2:0]              tlp_hdr_tc;
+	wire                    tlp_hdr_td;
+	wire                    tlp_hdr_ep;
+	wire [1:0]              tlp_hdr_attr;
+	wire [9:0]              tlp_hdr_len;
+	wire [15:0]             tlp_hdr_rid;
+	wire [7:0]              tlp_hdr_tag;
+	wire [7:0]              tlp_hdr_be;
 
 	// TLP DW3_DW2
-	reg [C_DATA_WIDTH-1:0] tlp_hdr_dw3_2;
-	wire [31:0]            tlp_hdr_addr32;
+	wire [C_DATA_WIDTH-1:0] tlp_hdr_dw3_2;
+	wire [31:0]             tlp_hdr_addr32;
 
 	wire [11:0] byte_count;
 	wire [6:0]  lower_addr;
@@ -135,6 +141,7 @@ module tlp_reg #(
 	assign m_axi_ctrl_ar_fire = m_axi_ctrl_arready && m_axi_ctrl_arvalid;
 	assign m_axi_ctrl_r_fire = m_axi_ctrl_rready && m_axi_ctrl_rvalid;
 
+	assign tlp_hdr_dw1_0 = rx_dw[0];
 	assign tlp_hdr_fmt_type = tlp_hdr_dw1_0[30:24];
 	assign tlp_hdr_tc = tlp_hdr_dw1_0[22:20];
 	assign tlp_hdr_td = tlp_hdr_dw1_0[15];
@@ -145,6 +152,8 @@ module tlp_reg #(
 	assign tlp_hdr_tag = tlp_hdr_dw1_0[47:40];
 	assign tlp_hdr_be = tlp_hdr_dw1_0[39:32];
 	assign tlp_hdr_addr32 = {tlp_hdr_dw3_2[31:2], 2'b00};
+
+	assign tlp_hdr_dw3_2 = rx_dw[1];
 
 	assign byte_count = 12'd4;
 	assign lower_addr = {tlp_hdr_addr32[6:0]};
@@ -157,73 +166,94 @@ module tlp_reg #(
 	assign m_axi_ctrl_wstrb = {(CTRL_WSTRB_WIDTH){1'b1}};
 	assign m_axi_ctrl_araddr = bar0_addr;
 
-	// @FF state_reg
+	// @FF ap_state, @FF rx_dw_idx, @FF tx_dw_idx, @FF ctrl_state
 	always @(posedge clk or negedge rst_n) begin
 		if(~rst_n) begin
-			state_reg <= STATE_IDLE;
+			ap_state <= STATE_IDLE;
+			rx_dw_idx <= 0;
+			tx_dw_idx <= 0;
+			ctrl_state <= CTRL_STATE_IDLE;
 		end else begin
-			case(state_reg)
-				STATE_IDLE: state_reg <= STATE_RX_DW3_2;
+			case(ap_state)
+				STATE_IDLE: begin
+					ap_state <= STATE_RX_DW;
+					rx_dw_idx <= 0;
+				end
 
-				STATE_RX_DW3_2: begin
+				STATE_RX_DW: begin
 					if(s_axis_cq_fire) begin
-						case(tlp_hdr_fmt_type)
-							TLP_MEM_RD32_FMT_TYPE:
-								if(tlp_hdr_len == 10'b1)
-									state_reg <= STATE_CTRL_AR;
-								else
-									state_reg <= STATE_IDLE;
+						if(rx_dw_idx == 1) begin
+							case(tlp_hdr_fmt_type)
+								TLP_MEM_RD32_FMT_TYPE:
+									if(tlp_hdr_len == 10'b1) begin
+										ap_state <= STATE_CTRL;
+										ctrl_state <= CTRL_STATE_AR;
+									end else begin
+										ap_state <= STATE_IDLE;
+									end
 
-							TLP_MEM_WR32_FMT_TYPE:
-								if(tlp_hdr_len == 10'b1)
-									state_reg <= STATE_CTRL_AW;
-								else
-									state_reg <= STATE_IDLE;
+								TLP_MEM_WR32_FMT_TYPE:
+									if(tlp_hdr_len == 10'b1) begin
+										ap_state <= STATE_CTRL;
+										ctrl_state <= CTRL_STATE_AW;
+									end else begin
+										ap_state <= STATE_IDLE;
+									end
 
-							default: state_reg <= STATE_IDLE;
-						endcase
+								default: ap_state <= STATE_IDLE;
+							endcase
+						end else begin
+							rx_dw_idx <= rx_dw_idx + 1;
+						end
 					end
 				end
 
-				STATE_CTRL_AW: begin
-					if(m_axi_ctrl_aw_fire) begin
-						state_reg <= STATE_CTRL_W;
-					end
+				STATE_CTRL: begin
+					case(ctrl_state)
+						CTRL_STATE_AW: begin
+							if(m_axi_ctrl_aw_fire) begin
+								ctrl_state <= CTRL_STATE_W;
+							end
+						end
+
+						CTRL_STATE_W: begin
+							if(m_axi_ctrl_w_fire) begin
+								ctrl_state <= CTRL_STATE_B;
+							end
+						end
+
+						CTRL_STATE_B: begin
+							if(m_axi_ctrl_b_fire) begin
+								ctrl_state <= CTRL_STATE_IDLE;
+								ap_state <= STATE_RX_DW;
+								rx_dw_idx <= 0;
+							end
+						end
+
+						CTRL_STATE_AR: begin
+							if(m_axi_ctrl_ar_fire) begin
+								ctrl_state <= CTRL_STATE_R;
+							end
+						end
+
+						CTRL_STATE_R: begin
+							if(m_axi_ctrl_r_fire) begin
+								ctrl_state <= CTRL_STATE_IDLE;
+								ap_state <= STATE_TX_DW;
+								tx_dw_idx <= 0;
+							end
+						end
+					endcase
 				end
 
-				STATE_CTRL_W: begin
-					if(m_axi_ctrl_w_fire) begin
-						state_reg <= STATE_CTRL_B;
-					end
-				end
-
-				STATE_CTRL_B: begin
-					if(m_axi_ctrl_b_fire) begin
-						state_reg <= STATE_RX_DW3_2;
-					end
-				end
-
-				STATE_CTRL_AR: begin
-					if(m_axi_ctrl_ar_fire) begin
-						state_reg <= STATE_CTRL_R;
-					end
-				end
-
-				STATE_CTRL_R: begin
-					if(m_axi_ctrl_r_fire) begin
-						state_reg <= STATE_TX_DW1_0;
-					end
-				end
-
-				STATE_TX_DW1_0: begin
+				STATE_TX_DW: begin
 					if(m_axis_cc_fire) begin
-						state_reg <= STATE_TX_DW3_2;
-					end
-				end
-
-				STATE_TX_DW3_2: begin
-					if(m_axis_cc_fire) begin
-						state_reg <= STATE_RX_DW3_2;
+						if(tx_dw_idx == 1) begin
+							ap_state <= STATE_RX_DW;
+							rx_dw_idx <= 0;
+						end else begin
+							tx_dw_idx <= tx_dw_idx + 1;
+						end
 					end
 				end
 			endcase
@@ -245,81 +275,90 @@ module tlp_reg #(
 		m_axi_ctrl_arvalid = 0;
 		m_axi_ctrl_rready = 0;
 
-		case(state_reg)
-			STATE_RX_DW3_2: begin
+		case(ap_state)
+			STATE_RX_DW: begin
 				s_axis_cq_tready = 1;
 			end
 
-			STATE_CTRL_AW: begin
-				m_axi_ctrl_awvalid = 1;
+			STATE_CTRL: begin
+				case(ctrl_state)
+					CTRL_STATE_AW: begin
+						m_axi_ctrl_awvalid = 1;
+					end
+
+					CTRL_STATE_W: begin
+						m_axi_ctrl_wvalid = 1;
+					end
+
+					CTRL_STATE_B: begin
+						m_axi_ctrl_bready = 1;
+					end
+
+					CTRL_STATE_AR: begin
+						m_axi_ctrl_arvalid = 1;
+					end
+
+					CTRL_STATE_R: begin
+						m_axi_ctrl_rready = 1;
+					end
+				endcase
 			end
 
-			STATE_CTRL_W: begin
-				m_axi_ctrl_wvalid = 1;
-			end
+			STATE_TX_DW: begin
+				case(tx_dw_idx)
+					0: begin
+						m_axis_cc_tlast = 0;
+						m_axis_cc_tdata = {           // Bits
+							// DW1
+							cfg_completer_id,         // 16
+							{3'b0},                   // 3
+							{1'b0},                   // 1
+							{byte_count},             // 12
+							// DW0
+							{1'b0},                   // 1
+							(TLP_CPLD_FMT_TYPE),      // 7
+							{1'b0},                   // 1
+							tlp_hdr_tc,               // 3
+							{4'b0},                   // 4
+							tlp_hdr_td,               // 1
+							tlp_hdr_ep,               // 1
+							tlp_hdr_attr,             // 2
+							{2'b0},                   // 2
+							tlp_hdr_len               // 10
+						};
+						m_axis_cc_tkeep = 8'hFF;
+						m_axis_cc_tvalid = 1;
+					end
 
-			STATE_CTRL_B: begin
-				m_axi_ctrl_bready = 1;
-			end
-
-			STATE_CTRL_AR: begin
-				m_axi_ctrl_arvalid = 1;
-			end
-
-			STATE_CTRL_R: begin
-				m_axi_ctrl_rready = 1;
-			end
-
-			STATE_TX_DW1_0: begin
-				m_axis_cc_tlast = 0;
-				m_axis_cc_tdata = {           // Bits
-					// DW1
-					cfg_completer_id,         // 16
-					{3'b0},                   // 3
-					{1'b0},                   // 1
-					{byte_count},             // 12
-                    // DW0
-					{1'b0},                   // 1
-					(TLP_CPLD_FMT_TYPE),      // 7
-					{1'b0},                   // 1
-					tlp_hdr_tc,               // 3
-					{4'b0},                   // 4
-					tlp_hdr_td,               // 1
-					tlp_hdr_ep,               // 1
-					tlp_hdr_attr,             // 2
-					{2'b0},                   // 2
-					tlp_hdr_len               // 10
-				};
-				m_axis_cc_tkeep = 8'hFF;
-				m_axis_cc_tvalid = 1;
-			end
-
-			STATE_TX_DW3_2: begin
-				m_axis_cc_tlast = 1;
-                m_axis_cc_tdata = {      // Bits
-                	// DW3
-					{pci_rd32_data},     // 32
-                	// DW2
-					tlp_hdr_rid,         // 16
-					tlp_hdr_tag,         //  8
-					{1'b0},              //  1
-					{lower_addr}         //  7
-				};
-				m_axis_cc_tkeep = 8'hFF;
-				m_axis_cc_tvalid = 1;
+					1: begin
+						m_axis_cc_tlast = 1;
+						m_axis_cc_tdata = {      // Bits
+							// DW3
+							{pci_rd32_data},     // 32
+							// DW2
+							tlp_hdr_rid,         // 16
+							tlp_hdr_tag,         //  8
+							{1'b0},              //  1
+							{lower_addr}         //  7
+						};
+						m_axis_cc_tkeep = 8'hFF;
+						m_axis_cc_tvalid = 1;
+					end
+				endcase
 			end
 		endcase
 	end
 
-	// tlp_hdr_dw3_2
+	// @FF rx_dw[i]
 	always @(posedge clk or negedge rst_n) begin
 		if(~rst_n) begin
-			tlp_hdr_dw3_2 <= 0;
+			rx_dw[0] <= 0;
+			rx_dw[1] <= 0;
 		end else begin
-			case(state_reg)
-				STATE_RX_DW3_2: begin
+			case(ap_state)
+				STATE_RX_DW: begin
 					if(s_axis_cq_fire) begin
-						tlp_hdr_dw3_2 <= s_axis_cq_tdata;
+						rx_dw[rx_dw_idx] <= s_axis_cq_tdata;
 					end
 				end
 			endcase
@@ -331,11 +370,15 @@ module tlp_reg #(
 		if(~rst_n) begin
 			ctrl_rx_data <= 0;
 		end else begin
-			case(state_reg)
-				STATE_CTRL_R: begin
-					if(m_axi_ctrl_r_fire) begin
-						ctrl_rx_data <= m_axi_ctrl_rdata;
-					end
+			case(ap_state)
+				STATE_CTRL: begin
+					case(ctrl_state)
+						CTRL_STATE_R: begin
+							if(m_axi_ctrl_r_fire) begin
+								ctrl_rx_data <= m_axi_ctrl_rdata;
+							end
+						end
+					endcase
 				end
 			endcase
 		end

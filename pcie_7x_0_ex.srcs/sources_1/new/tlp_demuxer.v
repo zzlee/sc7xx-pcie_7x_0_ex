@@ -88,9 +88,9 @@ module tlp_demuxer #(
 	localparam RC_GRP_COUNT     = 2;
 	localparam RC_GRP_CNT_WIDTH = $clog2(RC_GRP_COUNT + 1);
 
-	localparam RC_DESC_GRP       = 4'b1111;
-	localparam RC_DESC_COUNT     = 2;
-	localparam RC_DESC_CNT_WIDTH = $clog2(RC_DESC_COUNT + 1);
+	localparam RC_DESC_GRP           = 4'b1111;
+	localparam RC_DESC_GRP_COUNT     = 2;
+	localparam RC_DESC_GRP_CNT_WIDTH = $clog2(RC_DESC_GRP_COUNT + 1);
 
 	localparam STATE_IDLE               = 3'd0;
 	localparam STATE_DEMUX              = 3'd1;
@@ -105,13 +105,13 @@ module tlp_demuxer #(
 	genvar gen_i;
 	integer i;
 
-	reg [STATE_BITS-1:0]        ap_state;
-	reg [C_DATA_WIDTH-1:0]      rc_tdata;
-	reg [KEEP_WIDTH-1:0]        rc_tkeep;
-	reg                         rc_tlast;
-	reg [C_USER_WIDTH-1:0]      rc_tuser;
-	reg [RC_GRP_CNT_WIDTH-1:0]  rc_grp;
-	reg [RC_DESC_CNT_WIDTH-1:0] rc_desc;
+	reg [STATE_BITS-1:0]            ap_state;
+	reg [C_DATA_WIDTH-1:0]          rc_tdata;
+	reg [KEEP_WIDTH-1:0]            rc_tkeep;
+	reg                             rc_tlast;
+	reg [C_USER_WIDTH-1:0]          rc_tuser;
+	reg [RC_GRP_CNT_WIDTH-1:0]      rc_grp_idx;
+	reg [RC_DESC_GRP_CNT_WIDTH-1:0] rc_desc_idx;
 
 	wire s_axis_rx_fire;
 
@@ -119,9 +119,9 @@ module tlp_demuxer #(
 	wire m_axis_rc_tready [RC_GRP_COUNT-1:0];
 	wire m_axis_rc_fire [RC_GRP_COUNT-1:0];
 
-	reg  m_axis_rc_desc_tvalid [RC_DESC_COUNT-1:0];
-	wire m_axis_rc_desc_tready [RC_DESC_COUNT-1:0];
-	wire m_axis_rc_desc_fire [RC_DESC_COUNT-1:0];
+	reg  m_axis_rc_desc_tvalid [RC_DESC_GRP_COUNT-1:0];
+	wire m_axis_rc_desc_tready [RC_DESC_GRP_COUNT-1:0];
+	wire m_axis_rc_desc_fire [RC_DESC_GRP_COUNT-1:0];
 
 	wire [4:0] tlp_hdr_type;
 
@@ -163,11 +163,11 @@ module tlp_demuxer #(
 
 		case(ap_state)
 			STATE_DEMUX_RC: begin
-				m_axis_rc_tvalid[rc_grp] = s_axis_rx_tvalid;
+				m_axis_rc_tvalid[rc_grp_idx] = s_axis_rx_tvalid;
 			end
 
 			STATE_DEMUX_RC_LAST: begin
-				m_axis_rc_tvalid[rc_grp] = 1;
+				m_axis_rc_tvalid[rc_grp_idx] = 1;
 			end
 		endcase
 	end
@@ -189,24 +189,24 @@ module tlp_demuxer #(
 	assign m01_axis_rc_desc_tuser = rc_tuser;
 
 	generate
-		for(gen_i = 0; gen_i < RC_DESC_COUNT; gen_i = gen_i + 1) begin
+		for(gen_i = 0; gen_i < RC_DESC_GRP_COUNT; gen_i = gen_i + 1) begin
 			assign m_axis_rc_desc_fire[gen_i] = m_axis_rc_desc_tready[gen_i] && m_axis_rc_desc_tvalid[gen_i];
 		end
 	endgenerate
 
 	// @COMB m_axis_rc_desc_tvalid[i]
 	always @(*) begin
-		for(i = 0; i < RC_DESC_COUNT; i = i + 1) begin
+		for(i = 0; i < RC_DESC_GRP_COUNT; i = i + 1) begin
 			m_axis_rc_desc_tvalid[i] = 0;
 		end
 
 		case(ap_state)
 			STATE_DEMUX_RC_DESC: begin
-				m_axis_rc_desc_tvalid[rc_desc] = s_axis_rx_tvalid;
+				m_axis_rc_desc_tvalid[rc_desc_idx] = s_axis_rx_tvalid;
 			end
 
 			STATE_DEMUX_RC_DESC_LAST: begin
-				m_axis_rc_desc_tvalid[rc_desc] = 1;
+				m_axis_rc_desc_tvalid[rc_desc_idx] = 1;
 			end
 		endcase
 	end
@@ -268,7 +268,7 @@ module tlp_demuxer #(
 				end
 
 				STATE_DEMUX_RC_LAST: begin
-					if(m_axis_rc_fire[rc_grp]) begin
+					if(m_axis_rc_fire[rc_grp_idx]) begin
 						ap_state <= STATE_DEMUX;
 					end
 				end
@@ -280,7 +280,7 @@ module tlp_demuxer #(
 				end
 
 				STATE_DEMUX_RC_DESC_LAST: begin
-					if(m_axis_rc_desc_fire[rc_desc]) begin
+					if(m_axis_rc_desc_fire[rc_desc_idx]) begin
 						ap_state <= STATE_DEMUX;
 					end
 				end
@@ -306,11 +306,11 @@ module tlp_demuxer #(
 			end
 
 			STATE_DEMUX_RC: begin
-				s_axis_rx_tready = m_axis_rc_tready[rc_grp];
+				s_axis_rx_tready = m_axis_rc_tready[rc_grp_idx];
 			end
 
 			STATE_DEMUX_RC_DESC: begin
-				s_axis_rx_tready = m_axis_rc_desc_tready[rc_desc];
+				s_axis_rx_tready = m_axis_rc_desc_tready[rc_desc_idx];
 			end
 		endcase
 	end
@@ -321,8 +321,8 @@ module tlp_demuxer #(
 	always @(posedge clk or negedge rst_n) begin
 		if(~rst_n) begin
 			tlp_hdr_dw1_0 <= 0;
-			rc_grp <= 0;
-			rc_desc <= 0;
+			rc_grp_idx <= 0;
+			rc_desc_idx <= 0;
 			rc_tdata <= 0;
 			rc_tkeep <= 0;
 			rc_tlast <= 0;
@@ -336,8 +336,8 @@ module tlp_demuxer #(
 
 				STATE_DEMUX_RC_DW3_2:
 					if(s_axis_rx_fire) begin
-						rc_grp <= s_axis_rx_tdata[(8+4) +: RC_GRP_CNT_WIDTH];
-						rc_desc <= s_axis_rx_tdata[8 +: RC_DESC_CNT_WIDTH];
+						rc_grp_idx <= s_axis_rx_tdata[(8+4) +: RC_GRP_CNT_WIDTH];
+						rc_desc_idx <= s_axis_rx_tdata[8 +: RC_DESC_GRP_CNT_WIDTH];
 						rc_tdata <= s_axis_rx_tdata;
 						rc_tkeep <= s_axis_rx_tkeep;
 						rc_tlast <= s_axis_rx_tlast;
