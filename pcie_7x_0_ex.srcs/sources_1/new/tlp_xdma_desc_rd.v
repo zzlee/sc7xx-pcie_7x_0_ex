@@ -72,28 +72,28 @@ module tlp_xdma_desc_rd #(
 	localparam TLP_MEM_RD32_FMT_TYPE = 7'b00_00000;
 	localparam TLP_MEM_RD64_FMT_TYPE = 7'b01_00000;
 
-	localparam STATE_IDLE         = 3'd0;
-	localparam STATE_FINISH       = 3'd1;
-	localparam STATE_DMA_RD_DW1_0 = 3'd2;
-	localparam STATE_DMA_RD_DW3_2 = 3'd3;
-	localparam STATE_RX_DW1_0     = 3'd4;
-	localparam STATE_RX_DW3_2     = 3'd5;
-	localparam STATE_WR_FIFO      = 3'd6;
-	localparam STATE_ERROR        = 3'b111;
-	localparam STATE_BITS         = 3;
+	localparam AP_STATE_IDLE         = 3'd0;
+	localparam AP_STATE_FINISH       = 3'd1;
+	localparam AP_STATE_DMA_RD_DW1_0 = 3'd2;
+	localparam AP_STATE_DMA_RD_DW3_2 = 3'd3;
+	localparam AP_STATE_RX_DW1_0     = 3'd4;
+	localparam AP_STATE_RX_DW3_2     = 3'd5;
+	localparam AP_STATE_WR_FIFO      = 3'd6;
+	localparam AP_STATE_ERROR        = 3'b111;
+	localparam AP_STATE_WIDTH        = 3;
 
 	localparam DESC_BYTES = 8 << 2; // 8 DWs
 	localparam DESC_MAGIC = 16'hAD4B;
 	localparam DMA_FROM_DEVICE = 0;
 	localparam DMA_TO_DEVICE = 1;
 
-	reg [STATE_BITS-1:0] ap_state;
-	reg [31:0]           ERR_MASK_next;
-	reg [63:0]           desc_addr_int;
-	wire [31:0]          desc_addr_lo;
-	wire [31:0]          desc_addr_hi;
-	reg                  desc_addr_32bit;
-	reg [15:0]           desc_adj_int;
+	reg [AP_STATE_WIDTH-1:0] ap_state;
+	reg [31:0]               ERR_MASK_next;
+	reg [63:0]               desc_addr_int;
+	wire [31:0]              desc_addr_lo;
+	wire [31:0]              desc_addr_hi;
+	reg                      desc_addr_32bit;
+	reg [15:0]               desc_adj_int;
 
 	// RX TLP DW1_0
 	reg [C_DATA_WIDTH-1:0] rx_tlp_hdr_dw1_0;
@@ -139,8 +139,8 @@ module tlp_xdma_desc_rd #(
 	reg [DESC_WIDTH-1:0] fifo_xdma_desc_wr_data;
 	wire                 fifo_xdma_desc_full;
 
-	assign ap_idle = (ap_state == STATE_IDLE);
-	assign ap_done = (ap_state == STATE_FINISH);
+	assign ap_idle = (ap_state == AP_STATE_IDLE);
+	assign ap_done = (ap_state == AP_STATE_FINISH);
 	assign ap_ready = ap_done;
 
 	assign desc_addr_lo = {desc_addr_int[31:2], 2'b00};
@@ -181,7 +181,7 @@ module tlp_xdma_desc_rd #(
 	// @FF desc_dst_addr_lo, @FF desc_dst_addr_hi, @FF desc_next_lo, @FF desc_next_hi
 	always @(posedge clk or negedge rst_n) begin
 		if(~rst_n) begin
-			ap_state <= STATE_IDLE;
+			ap_state <= AP_STATE_IDLE;
 			desc_inc <= 0;
 			desc_control <= 0;
 			desc_bytes <= 0;
@@ -193,32 +193,32 @@ module tlp_xdma_desc_rd #(
 			desc_next_hi <= 0;
 		end else begin
 			case(ap_state)
-				STATE_IDLE: begin
+				AP_STATE_IDLE: begin
 					if(ap_start) begin
-						ap_state <= STATE_DMA_RD_DW1_0;
+						ap_state <= AP_STATE_DMA_RD_DW1_0;
 					end
 				end
 
-				STATE_DMA_RD_DW1_0: begin
+				AP_STATE_DMA_RD_DW1_0: begin
 					if(m_axis_rr_desc_fire) begin
-						ap_state <= STATE_DMA_RD_DW3_2;
+						ap_state <= AP_STATE_DMA_RD_DW3_2;
 					end
 				end
 
-				STATE_DMA_RD_DW3_2: begin
+				AP_STATE_DMA_RD_DW3_2: begin
 					if(m_axis_rr_desc_fire) begin
-						ap_state <= STATE_RX_DW1_0;
+						ap_state <= AP_STATE_RX_DW1_0;
 						desc_inc <= 0;
 					end
 				end
 
-				STATE_RX_DW1_0: begin
+				AP_STATE_RX_DW1_0: begin
 					if(s_axis_rc_desc_fire) begin
-						ap_state <= STATE_RX_DW3_2;
+						ap_state <= AP_STATE_RX_DW3_2;
 					end
 				end
 
-				STATE_RX_DW3_2: begin
+				AP_STATE_RX_DW3_2: begin
 					if(s_axis_rc_desc_fire) begin
 						case(desc_inc)
 							0: begin
@@ -238,7 +238,7 @@ module tlp_xdma_desc_rd #(
 							end
 							4: begin
 								desc_next_hi <= desc_dw0;
-								ap_state <= STATE_WR_FIFO;
+								ap_state <= AP_STATE_WR_FIFO;
 							end
 						endcase
 
@@ -246,26 +246,26 @@ module tlp_xdma_desc_rd #(
 					end
 				end
 
-				STATE_WR_FIFO: begin
+				AP_STATE_WR_FIFO: begin
 					if(! fifo_xdma_desc_full) begin
 						if(desc_adj_int == 0) begin
-							ap_state <= STATE_FINISH;
+							ap_state <= AP_STATE_FINISH;
 						end else begin
-							ap_state <= STATE_DMA_RD_DW1_0;
+							ap_state <= AP_STATE_DMA_RD_DW1_0;
 						end
 					end
 				end
 
-				STATE_FINISH: begin
-					ap_state <= STATE_IDLE;
+				AP_STATE_FINISH: begin
+					ap_state <= AP_STATE_IDLE;
 				end
 
-				STATE_ERROR: begin
+				AP_STATE_ERROR: begin
 				end
 			endcase
 
 			if(|ERR_MASK) begin
-				ap_state <= STATE_ERROR;
+				ap_state <= AP_STATE_ERROR;
 			end
 		end
 	end
@@ -276,7 +276,7 @@ module tlp_xdma_desc_rd #(
 			rx_tlp_hdr_dw1_0 <= 0;
 		end else begin
 			case(ap_state)
-				STATE_RX_DW1_0: begin
+				AP_STATE_RX_DW1_0: begin
 					if(s_axis_rc_desc_fire) begin
 						rx_tlp_hdr_dw1_0 <= s_axis_rc_desc_tdata;
 					end
@@ -293,7 +293,7 @@ module tlp_xdma_desc_rd #(
 			desc_adj_int <= 0;
 		end else begin
 			case(ap_state)
-				STATE_IDLE: begin
+				AP_STATE_IDLE: begin
 					if(ap_start) begin
 						desc_addr_int <= DESC_ADDR;
 						desc_addr_32bit <= (DESC_ADDR[63:32] == 32'b0);
@@ -301,7 +301,7 @@ module tlp_xdma_desc_rd #(
 					end
 				end
 
-				STATE_WR_FIFO: begin
+				AP_STATE_WR_FIFO: begin
 					if(! fifo_xdma_desc_full) begin
 						desc_addr_int <= {desc_next_hi, desc_next_lo};
 						desc_adj_int <= desc_adj_int - 1;
@@ -319,7 +319,7 @@ module tlp_xdma_desc_rd #(
 		m_axis_rr_desc_tvalid = 0;
 
 		case(ap_state)
-			STATE_DMA_RD_DW1_0: begin
+			AP_STATE_DMA_RD_DW1_0: begin
 				m_axis_rr_desc_tlast = 0;
 				m_axis_rr_desc_tdata = {      // Bits
 					// DW1
@@ -343,7 +343,7 @@ module tlp_xdma_desc_rd #(
 				m_axis_rr_desc_tvalid = 1;
 			end
 
-			STATE_DMA_RD_DW3_2: begin
+			AP_STATE_DMA_RD_DW3_2: begin
 				m_axis_rr_desc_tlast = 1;
 				m_axis_rr_desc_tvalid = 1;
 
@@ -379,7 +379,7 @@ module tlp_xdma_desc_rd #(
 		s_axis_rc_desc_tready = 0;
 
 		case(ap_state)
-			STATE_RX_DW3_2: begin
+			AP_STATE_RX_DW1_0, AP_STATE_RX_DW3_2: begin
 				s_axis_rc_desc_tready = 1;
 			end
 		endcase
@@ -406,7 +406,7 @@ module tlp_xdma_desc_rd #(
 		fifo_xdma_desc_wr_data = 'hEEFFAABBCAFECAFE;
 
 		case(ap_state)
-			STATE_WR_FIFO: begin
+			AP_STATE_WR_FIFO: begin
 				if(! fifo_xdma_desc_full) begin
 					fifo_xdma_desc_wr_en = 1;
 					fifo_xdma_desc_wr_data = {desc_bytes, desc_addr};
@@ -429,7 +429,7 @@ module tlp_xdma_desc_rd #(
 		ERR_MASK_next = ERR_MASK;
 
 		case(ap_state)
-			STATE_RX_DW3_2: begin
+			AP_STATE_RX_DW3_2: begin
 				if(s_axis_rc_desc_fire) begin
 					case(desc_inc)
 						4: begin
@@ -445,7 +445,7 @@ module tlp_xdma_desc_rd #(
 				end
 			end
 
-			STATE_WR_FIFO: begin
+			AP_STATE_WR_FIFO: begin
 				if(! fifo_xdma_desc_full) begin
 					if(desc_bytes == 0) begin
 						ERR_MASK_next = ERR_MASK_next | ERR_MASK_DESC_BYTES;

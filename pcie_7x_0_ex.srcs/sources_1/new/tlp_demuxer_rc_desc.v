@@ -26,7 +26,7 @@ module tlp_demuxer_rc_desc #(
 	parameter C_RC_DESC_COUNT = 2,
 
 	// Do not override parameters below this line
-	parameter KEEP_WIDTH = C_DATA_WIDTH / 8
+	parameter KEEP_WIDTH = C_DATA_WIDTH / 8,
 	parameter RC_DESC_CNT_WIDTH = $clog2(C_RC_DESC_COUNT + 1)
 )
 (
@@ -93,16 +93,21 @@ module tlp_demuxer_rc_desc #(
 					if(s_axis_ap_fire) begin
 						ap_state <= AP_STATE_DEMUX;
 						demux_fifo <= 0;
-						desc_idx <= s_axis_ap_tlp_hdr_tdata[(1*C_DATA_WIDTH+8) +: RC_DESC_CNT_WIDTH]:
+						desc_idx <= s_axis_ap_tlp_hdr_tdata[(1*C_DATA_WIDTH+8) +: RC_DESC_CNT_WIDTH];
+
+						if(s_axis_ap_tlp_hdr_tlast[C_TLP_HDR_COUNT-1]) begin
+							demux_fifo <= 1;
+						end
 					end
 				end
 
 				AP_STATE_DEMUX: begin
 					if(demux_fifo) begin
-						if(m_axis_cq_fire) begin
-							if(m_axis_cq_tlast) begin
+						if(m_axis_rc_desc_fire[desc_idx]) begin
+							if(m_axis_rc_desc_tlast[desc_idx]) begin
 								ap_state <= AP_STATE_IDLE;
 							end
+						end
 					end else begin
 						if(s_axis_rx_fire) begin
 							if(s_axis_rx_tlast) begin
@@ -126,7 +131,9 @@ module tlp_demuxer_rc_desc #(
 			end
 
 			AP_STATE_DEMUX: begin
-				s_axis_rx_tready = ~demux_fifo;
+				if(! demux_fifo) begin
+					s_axis_rx_tready = m_axis_rc_desc_tready[desc_idx];
+				end
 			end
 		endcase
 	end
@@ -134,7 +141,7 @@ module tlp_demuxer_rc_desc #(
 	// @COMB m_axis_rc_desc_tdata[i], @COMB m_axis_rc_desc_tkeep[i],
 	// @COMB m_axis_rc_desc_tlast, @COMB m_axis_rc_desc_tvalid
 	always @(*) begin
-		for(i = 0;i < C_RC_DESC_COUNT;i + i + 1) begin
+		for(i = 0;i < C_RC_DESC_COUNT;i = i + 1) begin
 			m_axis_rc_desc_tdata[i*C_DATA_WIDTH +: C_DATA_WIDTH] = 'hCAFE0002;
 			m_axis_rc_desc_tkeep[i*KEEP_WIDTH +: KEEP_WIDTH] = 0;
 			m_axis_rc_desc_tlast[i] = 0;
@@ -143,7 +150,7 @@ module tlp_demuxer_rc_desc #(
 
 		case(ap_state)
 			AP_STATE_DEMUX: begin
-				m_axis_rc_desc_tdata[desc_idx*C_DATA_Wdesc_idxDTH +: C_DATA_WIDTH] = fifo_tdata[0];
+				m_axis_rc_desc_tdata[desc_idx*C_DATA_WIDTH +: C_DATA_WIDTH] = fifo_tdata[0];
 				m_axis_rc_desc_tkeep[desc_idx*KEEP_WIDTH +: KEEP_WIDTH] = fifo_tkeep[0];
 				m_axis_rc_desc_tlast[desc_idx] = fifo_tlast[0];
 
@@ -168,15 +175,15 @@ module tlp_demuxer_rc_desc #(
 					if(s_axis_ap_fire) begin
 						for(i = 0;i < C_TLP_HDR_COUNT;i = i + 1) begin
 							fifo_tdata[i] <= s_axis_ap_tlp_hdr_tdata[i*C_DATA_WIDTH +: C_DATA_WIDTH];
-							fifo_tkeep[i] <= s_axis_ap_tlp_hdr_tkeep[i*C_DATA_WIDTH +: C_DATA_WIDTH];
-							fifo_tlast[i] <= s_axis_ap_tlp_hdr_tlast[i*C_DATA_WIDTH +: C_DATA_WIDTH];
+							fifo_tkeep[i] <= s_axis_ap_tlp_hdr_tkeep[i*KEEP_WIDTH +: KEEP_WIDTH];
+							fifo_tlast[i] <= s_axis_ap_tlp_hdr_tlast[i];
 						end
 					end
 				end
 
 				AP_STATE_DEMUX: begin
 					if(demux_fifo) begin
-						if(m_axis_cq_fire) begin
+						if(m_axis_rc_desc_fire[desc_idx]) begin
 							fifo_tdata[0] <= fifo_tdata[1];
 							fifo_tkeep[0] <= fifo_tkeep[1];
 							fifo_tlast[0] <= fifo_tlast[1];

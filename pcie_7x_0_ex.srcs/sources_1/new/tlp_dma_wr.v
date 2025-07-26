@@ -99,15 +99,15 @@ module tlp_dma_wr #(
 
 	localparam DESC_WIDTH = 32+32+32; // {bytes, addr_hi, addr_lo}
 
-	localparam STATE_IDLE         = 3'd0;
-	localparam STATE_FINISH       = 3'd1;
-	localparam STATE_WAIT_DESC    = 3'd2;
-	localparam STATE_DMA_WR_DW1_0 = 3'd3;
-	localparam STATE_DMA_WR_DW3_2 = 3'd4;
-	localparam STATE_DMA_WR       = 3'd5;
-	localparam STATE_DMA_WR_NEXT  = 3'd6;
-	localparam STATE_ERROR        = 3'b111;
-	localparam STATE_BITS         = 3;
+	localparam AP_STATE_IDLE         = 3'd0;
+	localparam AP_STATE_FINISH       = 3'd1;
+	localparam AP_STATE_WAIT_DESC    = 3'd2;
+	localparam AP_STATE_DMA_WR_DW1_0 = 3'd3;
+	localparam AP_STATE_DMA_WR_DW3_2 = 3'd4;
+	localparam AP_STATE_DMA_WR       = 3'd5;
+	localparam AP_STATE_DMA_WR_NEXT  = 3'd6;
+	localparam AP_STATE_ERROR        = 3'b111;
+	localparam AP_STATE_WIDTH        = 3;
 
 	localparam SRC_COUNT     = 2;
 	localparam SRC_CNT_WIDTH = $clog2(SRC_COUNT);
@@ -116,12 +116,12 @@ module tlp_dma_wr #(
 	localparam SRC_STATE_FINISH = 3'd1;
 	localparam SRC_STATE_RX_DW0 = 3'd2;
 	localparam SRC_STATE_RX_DW1 = 3'd3;
-	localparam SRC_STATE_BITS   = 3;
+	localparam SRC_STATE_WIDTH  = 3;
 
 	genvar gen_i;
 	integer i;
 
-	reg [STATE_BITS-1:0]    ap_state;
+	reg [AP_STATE_WIDTH-1:0]    ap_state;
 	reg [31:0]              ERR_MASK_next;
 	reg [63:0]              buf_addr_int;
 	wire [63:0]             buf_addr_next;
@@ -152,7 +152,7 @@ module tlp_dma_wr #(
 	wire                        s_axis_fire [SRC_COUNT-1:0];
 
 	// m_fifo_U[SRC_COUNT]
-	reg [SRC_STATE_BITS-1:0]   m_state [SRC_COUNT-1:0];
+	reg [SRC_STATE_WIDTH-1:0]  m_state [SRC_COUNT-1:0];
 	reg [C_SRC_DATA_WIDTH-1:0] m_dw0 [SRC_COUNT-1:0];
 	reg                        m_fifo_wr_en [SRC_COUNT-1:0];
 	wire [C_DATA_WIDTH-1:0]    m_fifo_wr_data [SRC_COUNT-1:0];
@@ -169,8 +169,8 @@ module tlp_dma_wr #(
 	wire                  desc_rd_ap_ready;
 	wire [31:0]           desc_rd_ERR_MASK;
 
-	assign ap_idle = (ap_state == STATE_IDLE);
-	assign ap_done = (ap_state == STATE_FINISH);
+	assign ap_idle = (ap_state == AP_STATE_IDLE);
+	assign ap_done = (ap_state == AP_STATE_FINISH);
 	assign ap_ready = ap_done;
 
 	tlp_xdma_desc_rd #(
@@ -297,72 +297,72 @@ module tlp_dma_wr #(
 	// @FF ap_state
 	always @(posedge clk or negedge rst_n) begin
 		if(~rst_n) begin
-			ap_state <= STATE_IDLE;
+			ap_state <= AP_STATE_IDLE;
 		end else begin
 			case(ap_state)
-				STATE_IDLE: begin
+				AP_STATE_IDLE: begin
 					if(ap_start) begin
-						ap_state <= STATE_WAIT_DESC;
+						ap_state <= AP_STATE_WAIT_DESC;
 					end
 				end
 
-				STATE_WAIT_DESC: begin
+				AP_STATE_WAIT_DESC: begin
 					if(desc_rd_data_valid) begin
-						ap_state <= STATE_DMA_WR_NEXT;
+						ap_state <= AP_STATE_DMA_WR_NEXT;
 					end
 				end
 
-				STATE_DMA_WR_DW1_0:
+				AP_STATE_DMA_WR_DW1_0:
 					if(m_axis_rr_fire) begin
-						ap_state <= STATE_DMA_WR_DW3_2;
+						ap_state <= AP_STATE_DMA_WR_DW3_2;
 					end
 
-				STATE_DMA_WR_DW3_2: begin
+				AP_STATE_DMA_WR_DW3_2: begin
 					if(m_axis_rr_fire) begin
-						ap_state <= STATE_DMA_WR;
+						ap_state <= AP_STATE_DMA_WR;
 
 						if(buf_addr_32bit) begin
 							if(m_axis_rr_tlast) begin
-								ap_state <= STATE_DMA_WR_NEXT;
+								ap_state <= AP_STATE_DMA_WR_NEXT;
 
 								if(size_next == 0) begin
-									ap_state <= STATE_FINISH;
+									ap_state <= AP_STATE_FINISH;
 								end else if(buf_size_next == 0) begin
-									ap_state <= STATE_WAIT_DESC;
+									ap_state <= AP_STATE_WAIT_DESC;
 								end
 							end
 						end
 					end
 				end
 
-				STATE_DMA_WR: begin
+				AP_STATE_DMA_WR: begin
 					if(m_axis_rr_fire) begin
 						if(m_axis_rr_tlast) begin
-							ap_state <= STATE_DMA_WR_NEXT;
+							ap_state <= AP_STATE_DMA_WR_NEXT;
 
 							if(size_next == 0) begin
-								ap_state <= STATE_FINISH;
+								ap_state <= AP_STATE_FINISH;
 							end else if(buf_size_next == 0) begin
-								ap_state <= STATE_WAIT_DESC;
+								ap_state <= AP_STATE_WAIT_DESC;
 							end
 						end
 					end
 				end
 
-				STATE_DMA_WR_NEXT: begin
-					ap_state <= STATE_DMA_WR_DW1_0;
+				AP_STATE_DMA_WR_NEXT: begin
+					ap_state <= AP_STATE_DMA_WR_DW1_0;
 				end
 
-				STATE_FINISH: begin
-					ap_state <= STATE_IDLE;
+				AP_STATE_FINISH: begin
+					ap_state <= AP_STATE_IDLE;
 				end
 
-				STATE_ERROR: begin
+				AP_STATE_ERROR: begin
 				end
 			endcase
 
 			if(|ERR_MASK) begin
-				ap_state <= STATE_ERROR;
+				ap_state <= AP_STATE_ERROR;
 			end
 		end
 	end
@@ -373,7 +373,7 @@ module tlp_dma_wr #(
 			desc_rd_ap_start <= 0;
 		end else begin
 			case(ap_state)
-				STATE_IDLE: begin
+				AP_STATE_IDLE: begin
 					if(ap_start) begin
 						desc_rd_ap_start <= 1;
 					end
@@ -393,7 +393,7 @@ module tlp_dma_wr #(
 		desc_rd_rd_en = 0;
 
 		case(ap_state)
-			STATE_WAIT_DESC: begin
+			AP_STATE_WAIT_DESC: begin
 				if(desc_rd_data_valid) begin
 					desc_rd_rd_en = 1;
 				end
@@ -424,13 +424,13 @@ module tlp_dma_wr #(
 			buf_size_next <= 0;
 		end else begin
 			case(ap_state)
-				STATE_IDLE: begin
+				AP_STATE_IDLE: begin
 					if(ap_start) begin
 						size_int <= (SIZE & ~32'b11);
 					end
 				end
 
-				STATE_WAIT_DESC: begin
+				AP_STATE_WAIT_DESC: begin
 					if(desc_rd_data_valid) begin
 						buf_addr_int <= desc_rd_rd_data[63:0];
 						buf_addr_32bit <= (desc_rd_rd_data[63:32] == 32'b0);
@@ -438,7 +438,7 @@ module tlp_dma_wr #(
 					end
 				end
 
-				STATE_DMA_WR_DW3_2: begin
+				AP_STATE_DMA_WR_DW3_2: begin
 					if(buf_addr_32bit) begin
 						if(m_axis_rr_fire) begin
 							burst_bytes_int <= burst_bytes_int - 4;
@@ -452,7 +452,7 @@ module tlp_dma_wr #(
 					end
 				end
 
-				STATE_DMA_WR: begin
+				AP_STATE_DMA_WR: begin
 					if(m_axis_rr_fire) begin
 						burst_bytes_int <= ((burst_bytes_int == 4) ? 0 : (burst_bytes_int - 8));
 
@@ -464,7 +464,7 @@ module tlp_dma_wr #(
 					end
 				end
 
-				STATE_DMA_WR_NEXT: begin
+				AP_STATE_DMA_WR_NEXT: begin
 					if(buf_size_int > BURST_SIZE) begin
 						addr_adder_inc <= BURST_SIZE;
 						size_next <= size_int - BURST_SIZE;
@@ -487,7 +487,7 @@ module tlp_dma_wr #(
 			src_sel <= 0;
 		end else begin
 			case(ap_state)
-				STATE_DMA_WR_NEXT: begin
+				AP_STATE_DMA_WR_NEXT: begin
 					src_sel <= ((src_sel == 0) ? 1 : 0);
 				end
 			endcase
@@ -506,7 +506,7 @@ module tlp_dma_wr #(
 		end
 
 		case(ap_state)
-			STATE_DMA_WR_DW1_0: begin
+			AP_STATE_DMA_WR_DW1_0: begin
 				m_axis_rr_tlast = 0;
 				m_axis_rr_tdata = {           // Bits
 					// DW1
@@ -530,7 +530,7 @@ module tlp_dma_wr #(
 				m_axis_rr_tvalid = 1;
 			end
 
-			STATE_DMA_WR_DW3_2: begin
+			AP_STATE_DMA_WR_DW3_2: begin
 				if(buf_addr_32bit) begin
 					m_axis_rr_tlast = (burst_bytes_int == 4);
 					m_axis_rr_tkeep = 8'hFF;
@@ -556,7 +556,7 @@ module tlp_dma_wr #(
 				end
 			end
 
-			STATE_DMA_WR: begin
+			AP_STATE_DMA_WR: begin
 				m_axis_rr_tlast = (burst_bytes_int == 4 || burst_bytes_int == 8);
 				m_axis_rr_tkeep = (burst_bytes_int == 4 ? 8'h0F : 8'hFF);
 
@@ -587,7 +587,7 @@ module tlp_dma_wr #(
 		ERR_MASK_next = ERR_MASK | desc_rd_ERR_MASK;
 
 		case(ap_state)
-			STATE_DMA_WR_NEXT: begin
+			AP_STATE_DMA_WR_NEXT: begin
 				if(buf_size_int > size_int) begin
 					ERR_MASK_next = ERR_MASK_next | ERR_MASK_BUF_SIZE;
 				end
