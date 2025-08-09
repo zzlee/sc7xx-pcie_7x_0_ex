@@ -35,7 +35,6 @@ module tlp_muxer #(
 	input                    s00_axis_tlast,
 	input                    s00_axis_tvalid,
 	output                   s00_axis_tready,
-	input [C_USER_WIDTH-1:0] s00_axis_tuser,
 
 	// Input 1
 	input [C_DATA_WIDTH-1:0] s01_axis_tdata,
@@ -43,7 +42,6 @@ module tlp_muxer #(
 	input                    s01_axis_tlast,
 	input                    s01_axis_tvalid,
 	output                   s01_axis_tready,
-	input [C_USER_WIDTH-1:0] s01_axis_tuser,
 
 	// Input 2
 	input [C_DATA_WIDTH-1:0] s02_axis_tdata,
@@ -51,7 +49,6 @@ module tlp_muxer #(
 	input                    s02_axis_tlast,
 	input                    s02_axis_tvalid,
 	output                   s02_axis_tready,
-	input [C_USER_WIDTH-1:0] s02_axis_tuser,
 
 	// Input 3
 	input [C_DATA_WIDTH-1:0] s03_axis_tdata,
@@ -59,7 +56,6 @@ module tlp_muxer #(
 	input                    s03_axis_tlast,
 	input                    s03_axis_tvalid,
 	output                   s03_axis_tready,
-	input [C_USER_WIDTH-1:0] s03_axis_tuser,
 
 	// Input 4
 	input [C_DATA_WIDTH-1:0] s04_axis_tdata,
@@ -67,7 +63,6 @@ module tlp_muxer #(
 	input                    s04_axis_tlast,
 	input                    s04_axis_tvalid,
 	output                   s04_axis_tready,
-	input [C_USER_WIDTH-1:0] s04_axis_tuser,
 
 	// Output
 	output reg [C_DATA_WIDTH-1:0] m_axis_tdata,
@@ -75,7 +70,7 @@ module tlp_muxer #(
 	output reg                    m_axis_tlast,
 	output reg                    m_axis_tvalid,
 	input                         m_axis_tready,
-	output reg [C_USER_WIDTH-1:0] m_axis_tuser
+	output [C_USER_WIDTH-1:0]     m_axis_tuser
 );
 	localparam SRC_COUNT = 5;
 	integer i;
@@ -110,37 +105,36 @@ module tlp_muxer #(
 	assign s_axis_tlast[0] = s00_axis_tlast;
 	assign s_axis_tvalid[0] = s00_axis_tvalid;
 	assign s00_axis_tready = s_axis_tready[0];
-	assign s_axis_tuser[0] = s00_axis_tuser;
 
 	assign s_axis_tdata[1] = s01_axis_tdata;
 	assign s_axis_tkeep[1] = s01_axis_tkeep;
 	assign s_axis_tlast[1] = s01_axis_tlast;
 	assign s_axis_tvalid[1] = s01_axis_tvalid;
 	assign s01_axis_tready = s_axis_tready[1];
-	assign s_axis_tuser[1] = s01_axis_tuser;
 
 	assign s_axis_tdata[2] = s02_axis_tdata;
 	assign s_axis_tkeep[2] = s02_axis_tkeep;
 	assign s_axis_tlast[2] = s02_axis_tlast;
 	assign s_axis_tvalid[2] = s02_axis_tvalid;
 	assign s02_axis_tready = s_axis_tready[2];
-	assign s_axis_tuser[2] = s02_axis_tuser;
 
 	assign s_axis_tdata[3] = s03_axis_tdata;
 	assign s_axis_tkeep[3] = s03_axis_tkeep;
 	assign s_axis_tlast[3] = s03_axis_tlast;
 	assign s_axis_tvalid[3] = s03_axis_tvalid;
 	assign s03_axis_tready = s_axis_tready[3];
-	assign s_axis_tuser[3] = s03_axis_tuser;
 
 	assign s_axis_tdata[4] = s04_axis_tdata;
 	assign s_axis_tkeep[4] = s04_axis_tkeep;
 	assign s_axis_tlast[4] = s04_axis_tlast;
 	assign s_axis_tvalid[4] = s04_axis_tvalid;
 	assign s04_axis_tready = s_axis_tready[4];
-	assign s_axis_tuser[4] = s04_axis_tuser;
 // ----------------------------------------------------------
 
+	assign m_axis_tuser[0] = 1'b0; // Unused for V6
+	assign m_axis_tuser[1] = 1'b0; // Error forward packet
+	assign m_axis_tuser[2] = 1'b0; // Stream packet
+	assign m_axis_tuser[3] = 1'b0; // Unused discontinue
 	assign m_axis_fire = m_axis_tvalid && m_axis_tready;
 
 	// @COMB s_axis_tready[i]
@@ -169,19 +163,17 @@ module tlp_muxer #(
 		end
 	end
 
-	// @COMB m_axis_tdata, @COMB m_axis_tkeep, @COMB m_axis_tlast, @COMB m_axis_tuser, @COMB m_axis_tvalid
+	// @COMB m_axis_tdata, @COMB m_axis_tkeep, @COMB m_axis_tlast, @COMB m_axis_tvalid
 	always @(*) begin
 		if(slaves_arb_output_valid) begin
 			m_axis_tdata = s_axis_tdata[slaves_arb_output_encoded];
 			m_axis_tkeep = s_axis_tkeep[slaves_arb_output_encoded];
 			m_axis_tlast = s_axis_tlast[slaves_arb_output_encoded];
-			m_axis_tuser = s_axis_tuser[slaves_arb_output_encoded];
 			m_axis_tvalid = s_axis_tvalid[slaves_arb_output_encoded];
 		end else begin
 			m_axis_tdata = 'hCAFECAFEABCDABCD; // for debug purpose
 			m_axis_tkeep = 0;
 			m_axis_tlast = 0;
-			m_axis_tuser = 0;
 			m_axis_tvalid = 0;
 		end
 	end

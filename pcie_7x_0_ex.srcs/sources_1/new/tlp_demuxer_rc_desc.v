@@ -139,7 +139,7 @@ module tlp_demuxer_rc_desc #(
 	end
 
 	// @COMB m_axis_rc_desc_tdata[i], @COMB m_axis_rc_desc_tkeep[i],
-	// @COMB m_axis_rc_desc_tlast, @COMB m_axis_rc_desc_tvalid
+	// @COMB m_axis_rc_desc_tlast[i], @COMB m_axis_rc_desc_tvalid[i]
 	always @(*) begin
 		for(i = 0;i < C_RC_DESC_COUNT;i = i + 1) begin
 			m_axis_rc_desc_tdata[i*C_DATA_WIDTH +: C_DATA_WIDTH] = 'hCAFE0002;

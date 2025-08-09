@@ -3,7 +3,7 @@
 // Company: 
 // Engineer: 
 // 
-// Create Date: 06/21/2025 03:35:23 PM
+// Create Date: 07/15/2025 08:21:23 PM
 // Design Name: 
 // Module Name: tlp_demuxer
 // Project Name: 
@@ -19,7 +19,6 @@
 // 
 //////////////////////////////////////////////////////////////////////////////////
 
-
 module tlp_demuxer #(
 	parameter C_DATA_WIDTH = 64,
 	parameter C_USER_WIDTH = 22,
@@ -31,7 +30,7 @@ module tlp_demuxer #(
 	input clk,
 	input rst_n,
 
-	// RX TLP
+	// RX
 	input [C_DATA_WIDTH-1:0] s_axis_rx_tdata,
 	input [KEEP_WIDTH-1:0]   s_axis_rx_tkeep,
 	input                    s_axis_rx_tlast,
@@ -39,249 +38,274 @@ module tlp_demuxer #(
 	output reg               s_axis_rx_tready,
 	input [C_USER_WIDTH-1:0] s_axis_rx_tuser,
 
-	// CQ TLP
+	// CQ
 	output [C_DATA_WIDTH-1:0] m_axis_cq_tdata,
 	output [KEEP_WIDTH-1:0]   m_axis_cq_tkeep,
 	output                    m_axis_cq_tlast,
 	output                    m_axis_cq_tvalid,
 	input                     m_axis_cq_tready,
-	output [C_USER_WIDTH-1:0] m_axis_cq_tuser,
 
-	// RC00 TLP
-	output [C_DATA_WIDTH-1:0] m00_axis_rc_tdata,
-	output [KEEP_WIDTH-1:0]   m00_axis_rc_tkeep,
-	output                    m00_axis_rc_tlast,
-	output                    m00_axis_rc_tvalid,
-	input                     m00_axis_rc_tready,
-	output [C_USER_WIDTH-1:0] m00_axis_rc_tuser,
-
-	// RC01 TLP
-	output [C_DATA_WIDTH-1:0] m01_axis_rc_tdata,
-	output [KEEP_WIDTH-1:0]   m01_axis_rc_tkeep,
-	output                    m01_axis_rc_tlast,
-	output                    m01_axis_rc_tvalid,
-	input                     m01_axis_rc_tready,
-	output [C_USER_WIDTH-1:0] m01_axis_rc_tuser,
-
-	// RC00 DESC TLP
+	// RC00 DESC
 	output [C_DATA_WIDTH-1:0] m00_axis_rc_desc_tdata,
 	output [KEEP_WIDTH-1:0]   m00_axis_rc_desc_tkeep,
 	output                    m00_axis_rc_desc_tlast,
 	output                    m00_axis_rc_desc_tvalid,
 	input                     m00_axis_rc_desc_tready,
-	output [C_USER_WIDTH-1:0] m00_axis_rc_desc_tuser,
 
-	// RC01 DESC TLP
+	// RC01 DESC
 	output [C_DATA_WIDTH-1:0] m01_axis_rc_desc_tdata,
 	output [KEEP_WIDTH-1:0]   m01_axis_rc_desc_tkeep,
 	output                    m01_axis_rc_desc_tlast,
 	output                    m01_axis_rc_desc_tvalid,
 	input                     m01_axis_rc_desc_tready,
-	output [C_USER_WIDTH-1:0] m01_axis_rc_desc_tuser,
 
-	input [15:0]                  cfg_completer_id,
-	output reg [C_DATA_WIDTH-1:0] tlp_hdr_dw1_0
+	// RC02 DESC
+	output [C_DATA_WIDTH-1:0] m02_axis_rc_desc_tdata,
+	output [KEEP_WIDTH-1:0]   m02_axis_rc_desc_tkeep,
+	output                    m02_axis_rc_desc_tlast,
+	output                    m02_axis_rc_desc_tvalid,
+	input                     m02_axis_rc_desc_tready,
+
+	// RC03 DESC
+	output [C_DATA_WIDTH-1:0] m03_axis_rc_desc_tdata,
+	output [KEEP_WIDTH-1:0]   m03_axis_rc_desc_tkeep,
+	output                    m03_axis_rc_desc_tlast,
+	output                    m03_axis_rc_desc_tvalid,
+	input                     m03_axis_rc_desc_tready,
+
+	// RC00 GRP
+	output [C_DATA_WIDTH-1:0] m00_axis_rc_grp_tdata,
+	output [KEEP_WIDTH-1:0]   m00_axis_rc_grp_tkeep,
+	output                    m00_axis_rc_grp_tlast,
+	output                    m00_axis_rc_grp_tvalid,
+	input                     m00_axis_rc_grp_tready,
+
+	// RC01 GRP
+	output [C_DATA_WIDTH-1:0] m01_axis_rc_grp_tdata,
+	output [KEEP_WIDTH-1:0]   m01_axis_rc_grp_tkeep,
+	output                    m01_axis_rc_grp_tlast,
+	output                    m01_axis_rc_grp_tvalid,
+	input                     m01_axis_rc_grp_tready,
+
+	input [15:0] cfg_completer_id
 );
 	localparam TLP_MEM_TYPE = 5'b00000;
 	localparam TLP_CPL_TYPE = 5'b01010;
 
-	localparam RC_GRP_COUNT     = 2;
-	localparam RC_GRP_CNT_WIDTH = $clog2(RC_GRP_COUNT + 1);
+	localparam RC_DESC_GRP_TAG = 4'hF;
+	localparam RC_DESC_COUNT   = 4;
 
-	localparam RC_DESC_GRP           = 4'b1111;
-	localparam RC_DESC_GRP_COUNT     = 2;
-	localparam RC_DESC_GRP_CNT_WIDTH = $clog2(RC_DESC_GRP_COUNT + 1);
+	localparam RC_GRP_COUNT = 2;
 
-	localparam STATE_IDLE               = 3'd0;
-	localparam STATE_DEMUX              = 3'd1;
-	localparam STATE_DEMUX_CQ           = 3'd2;
-	localparam STATE_DEMUX_RC_DW3_2     = 3'd3;
-	localparam STATE_DEMUX_RC           = 3'd4;
-	localparam STATE_DEMUX_RC_LAST      = 3'd5;
-	localparam STATE_DEMUX_RC_DESC      = 3'd6;
-	localparam STATE_DEMUX_RC_DESC_LAST = 3'd7;
-	localparam STATE_BITS               = 3;
+	localparam AP_STATE_IDLE          = 3'd0;
+	localparam AP_STATE_TLP_HDR       = 3'd1;
+	localparam AP_STATE_DEMUX_CQ      = 3'd2;
+	localparam AP_STATE_DEMUX_RC_DESC = 3'd3;
+	localparam AP_STATE_DEMUX_RC_GRP  = 3'd4;
+	localparam AP_STATE_DEMUX_ERR     = 3'd5;
+	localparam AP_STATE_WIDTH         = 3;
 
-	genvar gen_i;
+	localparam TLP_HDR_COUNT     = 2;
+	localparam TLP_HDR_CNT_WIDTH = $clog2(TLP_HDR_COUNT);
+
 	integer i;
 
-	reg [STATE_BITS-1:0]            ap_state;
-	reg [C_DATA_WIDTH-1:0]          rc_tdata;
-	reg [KEEP_WIDTH-1:0]            rc_tkeep;
-	reg                             rc_tlast;
-	reg [C_USER_WIDTH-1:0]          rc_tuser;
-	reg [RC_GRP_CNT_WIDTH-1:0]      rc_grp_idx;
-	reg [RC_DESC_GRP_CNT_WIDTH-1:0] rc_desc_idx;
+	reg [AP_STATE_WIDTH-1:0]    ap_state;
+	reg [TLP_HDR_CNT_WIDTH-1:0] tlp_hdr_idx;
+	reg [C_DATA_WIDTH-1:0]      tlp_hdr_tdata [TLP_HDR_COUNT-1:0];
+	reg [KEEP_WIDTH-1:0]        tlp_hdr_tkeep [TLP_HDR_COUNT-1:0];
+	reg                         tlp_hdr_tlast [TLP_HDR_COUNT-1:0];
+	wire [4:0]                  tlp_hdr_tdata_type;
+	reg                         tlp_demuxer_cq_busy;
+	reg                         tlp_demuxer_rc_desc_busy;
+	reg                         tlp_demuxer_rc_grp_busy;
+
+	// RC DESCs
+	wire [C_DATA_WIDTH-1:0] m_axis_rc_desc_tdata [RC_DESC_COUNT-1:0];
+	wire [KEEP_WIDTH-1:0]   m_axis_rc_desc_tkeep [RC_DESC_COUNT-1:0];
+	wire                    m_axis_rc_desc_tlast [RC_DESC_COUNT-1:0];
+	wire                    m_axis_rc_desc_tvalid [RC_DESC_COUNT-1:0];
+	wire                    m_axis_rc_desc_tready [RC_DESC_COUNT-1:0];
+
+	// RC GRPs
+	wire [C_DATA_WIDTH-1:0] m_axis_rc_grp_tdata [RC_GRP_COUNT-1:0];
+	wire [KEEP_WIDTH-1:0]   m_axis_rc_grp_tkeep [RC_GRP_COUNT-1:0];
+	wire                    m_axis_rc_grp_tlast [RC_GRP_COUNT-1:0];
+	wire                    m_axis_rc_grp_tvalid [RC_GRP_COUNT-1:0];
+	wire                    m_axis_rc_grp_tready [RC_GRP_COUNT-1:0];
 
 	wire s_axis_rx_fire;
 
-	reg  m_axis_rc_tvalid [RC_GRP_COUNT-1:0];
-	wire m_axis_rc_tready [RC_GRP_COUNT-1:0];
-	wire m_axis_rc_fire [RC_GRP_COUNT-1:0];
+	// tlp_demuxer_cq_U signals
+	reg [C_DATA_WIDTH-1:0]               tlp_demuxer_cq_s_axis_rx_tdata;
+	reg [KEEP_WIDTH-1:0]                 tlp_demuxer_cq_s_axis_rx_tkeep;
+	reg                                  tlp_demuxer_cq_s_axis_rx_tlast;
+	reg                                  tlp_demuxer_cq_s_axis_rx_tvalid;
+	wire                                 tlp_demuxer_cq_s_axis_rx_tready;
+	reg [C_USER_WIDTH-1:0]               tlp_demuxer_cq_s_axis_rx_tuser;
+	wire                                 tlp_demuxer_cq_s_axis_rx_fire;
+	reg [C_DATA_WIDTH*TLP_HDR_COUNT-1:0] tlp_demuxer_cq_s_axis_ap_tlp_hdr_tdata;
+	reg [KEEP_WIDTH*TLP_HDR_COUNT-1:0]   tlp_demuxer_cq_s_axis_ap_tlp_hdr_tkeep;
+	reg [TLP_HDR_COUNT-1:0]              tlp_demuxer_cq_s_axis_ap_tlp_hdr_tlast;
+	reg                                  tlp_demuxer_cq_s_axis_ap_tvalid;
+	wire                                 tlp_demuxer_cq_s_axis_ap_tready;
+	wire                                 tlp_demuxer_cq_s_axis_ap_fire;
 
-	reg  m_axis_rc_desc_tvalid [RC_DESC_GRP_COUNT-1:0];
-	wire m_axis_rc_desc_tready [RC_DESC_GRP_COUNT-1:0];
-	wire m_axis_rc_desc_fire [RC_DESC_GRP_COUNT-1:0];
+	// tlp_demuxer_rc_desc_U signals
+	reg [C_DATA_WIDTH-1:0]               tlp_demuxer_rc_desc_s_axis_rx_tdata;
+	reg [KEEP_WIDTH-1:0]                 tlp_demuxer_rc_desc_s_axis_rx_tkeep;
+	reg                                  tlp_demuxer_rc_desc_s_axis_rx_tlast;
+	reg                                  tlp_demuxer_rc_desc_s_axis_rx_tvalid;
+	wire                                 tlp_demuxer_rc_desc_s_axis_rx_tready;
+	reg [C_USER_WIDTH-1:0]               tlp_demuxer_rc_desc_s_axis_rx_tuser;
+	wire                                 tlp_demuxer_rc_desc_s_axis_rx_fire;
+	reg [C_DATA_WIDTH*TLP_HDR_COUNT-1:0] tlp_demuxer_rc_desc_s_axis_ap_tlp_hdr_tdata;
+	reg [KEEP_WIDTH*TLP_HDR_COUNT-1:0]   tlp_demuxer_rc_desc_s_axis_ap_tlp_hdr_tkeep;
+	reg [TLP_HDR_COUNT-1:0]              tlp_demuxer_rc_desc_s_axis_ap_tlp_hdr_tlast;
+	reg                                  tlp_demuxer_rc_desc_s_axis_ap_tvalid;
+	wire                                 tlp_demuxer_rc_desc_s_axis_ap_tready;
+	wire                                 tlp_demuxer_rc_desc_s_axis_ap_fire;
 
-	wire [4:0] tlp_hdr_type;
+	// tlp_demuxer_rc_grp_U signals
+	reg [C_DATA_WIDTH-1:0]               tlp_demuxer_rc_grp_s_axis_rx_tdata;
+	reg [KEEP_WIDTH-1:0]                 tlp_demuxer_rc_grp_s_axis_rx_tkeep;
+	reg                                  tlp_demuxer_rc_grp_s_axis_rx_tlast;
+	reg                                  tlp_demuxer_rc_grp_s_axis_rx_tvalid;
+	wire                                 tlp_demuxer_rc_grp_s_axis_rx_tready;
+	reg [C_USER_WIDTH-1:0]               tlp_demuxer_rc_grp_s_axis_rx_tuser;
+	wire                                 tlp_demuxer_rc_grp_s_axis_rx_fire;
+	reg [C_DATA_WIDTH*TLP_HDR_COUNT-1:0] tlp_demuxer_rc_grp_s_axis_ap_tlp_hdr_tdata;
+	reg [KEEP_WIDTH*TLP_HDR_COUNT-1:0]   tlp_demuxer_rc_grp_s_axis_ap_tlp_hdr_tkeep;
+	reg [TLP_HDR_COUNT-1:0]              tlp_demuxer_rc_grp_s_axis_ap_tlp_hdr_tlast;
+	reg                                  tlp_demuxer_rc_grp_s_axis_ap_tvalid;
+	wire                                 tlp_demuxer_rc_grp_s_axis_ap_tready;
+	wire                                 tlp_demuxer_rc_grp_s_axis_ap_fire;
 
-	assign tlp_hdr_type = s_axis_rx_tdata[28:24];
+	assign tlp_hdr_tdata_type = tlp_hdr_tdata[0][28:24];
 
-	assign m_axis_cq_tdata = s_axis_rx_tdata;
-	assign m_axis_cq_tkeep = s_axis_rx_tkeep;
-	assign m_axis_cq_tlast = s_axis_rx_tlast;
-	assign m_axis_cq_tvalid = (ap_state == STATE_DEMUX_CQ ? s_axis_rx_tvalid : 1'b0);
-	assign m_axis_cq_tuser = s_axis_rx_tuser;
-
-// ---------------------------------------------------
-// ---- RC
-	assign m00_axis_rc_tdata = rc_tdata;
-	assign m00_axis_rc_tkeep = rc_tkeep;
-	assign m00_axis_rc_tlast = rc_tlast;
-	assign m00_axis_rc_tvalid = m_axis_rc_tvalid[0];
-	assign m_axis_rc_tready[0] = m00_axis_rc_tready;
-	assign m00_axis_rc_tuser = rc_tuser;
-
-	assign m01_axis_rc_tdata = rc_tdata;
-	assign m01_axis_rc_tkeep = rc_tkeep;
-	assign m01_axis_rc_tlast = rc_tlast;
-	assign m01_axis_rc_tvalid = m_axis_rc_tvalid[1];
-	assign m_axis_rc_tready[1] = m01_axis_rc_tready;
-	assign m01_axis_rc_tuser = rc_tuser;
-
-	generate
-		for(gen_i = 0; gen_i < RC_GRP_COUNT; gen_i = gen_i + 1) begin
-			assign m_axis_rc_fire[gen_i] = m_axis_rc_tready[gen_i] && m_axis_rc_tvalid[gen_i];
-		end
-	endgenerate
-
-	// @COMB m_axis_rc_tvalid[i]
-	always @(*) begin
-		for(i = 0; i < RC_GRP_COUNT; i = i + 1) begin
-			m_axis_rc_tvalid[i] = 0;
-		end
-
-		case(ap_state)
-			STATE_DEMUX_RC: begin
-				m_axis_rc_tvalid[rc_grp_idx] = s_axis_rx_tvalid;
-			end
-
-			STATE_DEMUX_RC_LAST: begin
-				m_axis_rc_tvalid[rc_grp_idx] = 1;
-			end
-		endcase
-	end
-
-// ---------------------------------------------------
-// ---- RC DESC
-	assign m00_axis_rc_desc_tdata = rc_tdata;
-	assign m00_axis_rc_desc_tkeep = rc_tkeep;
-	assign m00_axis_rc_desc_tlast = rc_tlast;
-	assign m00_axis_rc_desc_tvalid = m_axis_rc_desc_tvalid[0];
-	assign m_axis_rc_desc_tready[0] = m00_axis_rc_desc_tready;
-	assign m00_axis_rc_desc_tuser = rc_tuser;
-
-	assign m01_axis_rc_desc_tdata = rc_tdata;
-	assign m01_axis_rc_desc_tkeep = rc_tkeep;
-	assign m01_axis_rc_desc_tlast = rc_tlast;
-	assign m01_axis_rc_desc_tvalid = m_axis_rc_desc_tvalid[1];
-	assign m_axis_rc_desc_tready[1] = m01_axis_rc_desc_tready;
-	assign m01_axis_rc_desc_tuser = rc_tuser;
-
-	generate
-		for(gen_i = 0; gen_i < RC_DESC_GRP_COUNT; gen_i = gen_i + 1) begin
-			assign m_axis_rc_desc_fire[gen_i] = m_axis_rc_desc_tready[gen_i] && m_axis_rc_desc_tvalid[gen_i];
-		end
-	endgenerate
-
-	// @COMB m_axis_rc_desc_tvalid[i]
-	always @(*) begin
-		for(i = 0; i < RC_DESC_GRP_COUNT; i = i + 1) begin
-			m_axis_rc_desc_tvalid[i] = 0;
-		end
-
-		case(ap_state)
-			STATE_DEMUX_RC_DESC: begin
-				m_axis_rc_desc_tvalid[rc_desc_idx] = s_axis_rx_tvalid;
-			end
-
-			STATE_DEMUX_RC_DESC_LAST: begin
-				m_axis_rc_desc_tvalid[rc_desc_idx] = 1;
-			end
-		endcase
-	end
-// ---------------------------------------------------
-
-	// @FF ap_state
+	// @FF ap_state, @FF tlp_hdr_idx, @FF tlp_hdr_tdata[i], @FF tlp_hdr_tkeep[i], @FF tlp_hdr_tlast[i],
+	// @FF tlp_demuxer_cq_busy, @FF tlp_demuxer_rc_desc_busy, @FF tlp_demuxer_rc_grp_busy
 	always @(posedge clk or negedge rst_n) begin
 		if(~rst_n) begin
-			ap_state <= STATE_IDLE;
+			ap_state <= AP_STATE_IDLE;
+			tlp_hdr_idx <= 0;
+			for(i = 0;i < TLP_HDR_COUNT;i = i + 1) begin
+				tlp_hdr_tdata[i] <= 0;
+				tlp_hdr_tkeep[i] <= 0;
+				tlp_hdr_tlast[i] <= 0;
+			end
+			tlp_demuxer_cq_busy <= 0;
+			tlp_demuxer_rc_desc_busy <= 0;
+			tlp_demuxer_rc_grp_busy <= 0;
 		end else begin
 			case(ap_state)
-				STATE_IDLE: begin
-					ap_state <= STATE_DEMUX;
+				AP_STATE_IDLE: begin
+					ap_state <= AP_STATE_TLP_HDR;
+					tlp_hdr_idx <= 0;
 				end
 
-				STATE_DEMUX: begin
+				AP_STATE_TLP_HDR: begin
 					if(s_axis_rx_fire) begin
-						case(tlp_hdr_type)
-							TLP_MEM_TYPE: ap_state <= STATE_DEMUX_CQ;
-							TLP_CPL_TYPE: ap_state <= STATE_DEMUX_RC_DW3_2;
-						endcase
-					end
-				end
+						tlp_hdr_tdata[tlp_hdr_idx] <= s_axis_rx_tdata;
+						tlp_hdr_tkeep[tlp_hdr_idx] <= s_axis_rx_tkeep;
+						tlp_hdr_tlast[tlp_hdr_idx] <= s_axis_rx_tlast;
+						tlp_hdr_idx <= tlp_hdr_idx + 1;
 
-				STATE_DEMUX_CQ: begin
-					if(s_axis_rx_fire && s_axis_rx_tlast) begin
-						ap_state <= STATE_DEMUX;
-					end
-				end
-
-				STATE_DEMUX_RC_DW3_2: begin
-					if(s_axis_rx_fire) begin
-						if(s_axis_rx_tdata[31:16] == cfg_completer_id) begin
-							if(s_axis_rx_tdata[(8+4) +: 4] == RC_DESC_GRP) begin
-								ap_state <= STATE_DEMUX_RC_DESC;
-
-								if(s_axis_rx_tlast) begin
-									ap_state <= STATE_DEMUX_RC_DESC_LAST;
+						if(tlp_hdr_idx == 1) begin
+							case(tlp_hdr_tdata_type)
+								TLP_MEM_TYPE: begin
+									ap_state <= AP_STATE_DEMUX_CQ;
+									tlp_demuxer_cq_busy <= 1;
 								end
-							end else if(s_axis_rx_tdata[(8+4) +: RC_GRP_CNT_WIDTH] < RC_GRP_COUNT) begin
-								ap_state <= STATE_DEMUX_RC;
 
-								if(s_axis_rx_tlast) begin
-									ap_state <= STATE_DEMUX_RC_LAST;
+								TLP_CPL_TYPE: begin
+									if(s_axis_rx_tdata[31:16] == cfg_completer_id) begin
+										if(s_axis_rx_tdata[(8+4) +: 4] == RC_DESC_GRP_TAG) begin
+											ap_state <= AP_STATE_DEMUX_RC_DESC;
+											tlp_demuxer_rc_desc_busy <= 1;
+										end else begin
+											ap_state <= AP_STATE_DEMUX_RC_GRP;
+											tlp_demuxer_rc_grp_busy <= 1;
+										end
+									end else begin
+										ap_state <= AP_STATE_DEMUX_ERR;
+									end
 								end
-							end else begin
-								ap_state <= STATE_DEMUX;
-							end
-						end else begin
-							ap_state <= STATE_DEMUX;
+
+								default: begin
+									ap_state <= AP_STATE_DEMUX_ERR;
+								end
+							endcase
 						end
 					end
 				end
 
-				STATE_DEMUX_RC: begin
-					if(s_axis_rx_fire && s_axis_rx_tlast) begin
-						ap_state <= STATE_DEMUX_RC_LAST;
+				AP_STATE_DEMUX_CQ: begin
+					if(tlp_demuxer_cq_busy) begin
+						if(tlp_demuxer_cq_s_axis_ap_fire) begin
+							tlp_demuxer_cq_busy <= 0;
+
+							if(tlp_demuxer_cq_s_axis_ap_tlp_hdr_tlast[TLP_HDR_COUNT-1]) begin
+								ap_state <= AP_STATE_TLP_HDR;
+								tlp_hdr_idx <= 0;
+							end
+						end
+					end else begin
+						if(s_axis_rx_fire) begin
+							if(s_axis_rx_tlast) begin
+								ap_state <= AP_STATE_TLP_HDR;
+								tlp_hdr_idx <= 0;
+							end
+						end
 					end
 				end
 
-				STATE_DEMUX_RC_LAST: begin
-					if(m_axis_rc_fire[rc_grp_idx]) begin
-						ap_state <= STATE_DEMUX;
+				AP_STATE_DEMUX_RC_DESC: begin
+					if(tlp_demuxer_rc_desc_busy) begin
+						if(tlp_demuxer_rc_desc_s_axis_ap_fire) begin
+							tlp_demuxer_rc_desc_busy <= 0;
+
+							if(tlp_demuxer_rc_desc_s_axis_ap_tlp_hdr_tlast[TLP_HDR_COUNT-1]) begin
+								ap_state <= AP_STATE_TLP_HDR;
+								tlp_hdr_idx <= 0;
+							end
+						end
+					end else begin
+						if(s_axis_rx_fire) begin
+							if(s_axis_rx_tlast) begin
+								ap_state <= AP_STATE_TLP_HDR;
+								tlp_hdr_idx <= 0;
+							end
+						end
 					end
 				end
 
-				STATE_DEMUX_RC_DESC: begin
-					if(s_axis_rx_fire && s_axis_rx_tlast) begin
-						ap_state <= STATE_DEMUX_RC_DESC_LAST;
+				AP_STATE_DEMUX_RC_GRP: begin
+					if(tlp_demuxer_rc_grp_busy) begin
+						if(tlp_demuxer_rc_grp_s_axis_ap_fire) begin
+							tlp_demuxer_rc_grp_busy <= 0;
+
+							if(tlp_demuxer_rc_grp_s_axis_ap_tlp_hdr_tlast[TLP_HDR_COUNT-1]) begin
+								ap_state <= AP_STATE_TLP_HDR;
+								tlp_hdr_idx <= 0;
+							end
+						end
+					end else begin
+						if(s_axis_rx_fire) begin
+							if(s_axis_rx_tlast) begin
+								ap_state <= AP_STATE_TLP_HDR;
+								tlp_hdr_idx <= 0;
+							end
+						end
 					end
 				end
 
-				STATE_DEMUX_RC_DESC_LAST: begin
-					if(m_axis_rc_desc_fire[rc_desc_idx]) begin
-						ap_state <= STATE_DEMUX;
+				AP_STATE_DEMUX_ERR: begin
+					if(s_axis_rx_fire) begin
+						if(s_axis_rx_tlast) begin
+							ap_state <= AP_STATE_TLP_HDR;
+							tlp_hdr_idx <= 0;
+						end
 					end
 				end
 			endcase
@@ -293,65 +317,311 @@ module tlp_demuxer #(
 		s_axis_rx_tready = 0;
 
 		case(ap_state)
-			STATE_DEMUX: begin
+			AP_STATE_TLP_HDR: begin
 				s_axis_rx_tready = 1;
 			end
 
-			STATE_DEMUX_CQ: begin
-				s_axis_rx_tready = m_axis_cq_tready;
+			AP_STATE_DEMUX_CQ: begin
+				if(! tlp_demuxer_cq_busy) begin
+					s_axis_rx_tready = tlp_demuxer_cq_s_axis_rx_tready;
+				end
 			end
 
-			STATE_DEMUX_RC_DW3_2: begin
+			AP_STATE_DEMUX_RC_DESC: begin
+				if(! tlp_demuxer_rc_desc_busy) begin
+					s_axis_rx_tready = tlp_demuxer_rc_desc_s_axis_rx_tready;
+				end
+			end
+
+			AP_STATE_DEMUX_RC_GRP: begin
+				if(! tlp_demuxer_rc_grp_busy) begin
+					s_axis_rx_tready = tlp_demuxer_rc_grp_s_axis_rx_tready;
+				end
+			end
+
+			AP_STATE_DEMUX_ERR: begin
 				s_axis_rx_tready = 1;
-			end
-
-			STATE_DEMUX_RC: begin
-				s_axis_rx_tready = m_axis_rc_tready[rc_grp_idx];
-			end
-
-			STATE_DEMUX_RC_DESC: begin
-				s_axis_rx_tready = m_axis_rc_desc_tready[rc_desc_idx];
 			end
 		endcase
 	end
 
 	assign s_axis_rx_fire = s_axis_rx_tready && s_axis_rx_tvalid;
 
-	// @FF tlp_hdr_dw1_0, @FF rc_grp, @FF rc_tdata, @FF rc_tlast, @FF rc_tlast, @FF rc_tuser
-	always @(posedge clk or negedge rst_n) begin
-		if(~rst_n) begin
-			tlp_hdr_dw1_0 <= 0;
-			rc_grp_idx <= 0;
-			rc_desc_idx <= 0;
-			rc_tdata <= 0;
-			rc_tkeep <= 0;
-			rc_tlast <= 0;
-			rc_tuser <= 0;
-		end else begin
-			case(ap_state)
-				STATE_DEMUX:
-					if(s_axis_rx_fire) begin
-						tlp_hdr_dw1_0 <= s_axis_rx_tdata;
-					end
+	// @COMB tlp_demuxer_cq_s_axis_ap_tlp_hdr_tdata, @COMB tlp_demuxer_cq_s_axis_ap_tlp_hdr_tkeep,
+	// @COMB tlp_demuxer_cq_s_axis_ap_tlp_hdr_tlast, @COMB tlp_demuxer_cq_s_axis_ap_tvalid
+	always @(*) begin
+		tlp_demuxer_cq_s_axis_ap_tlp_hdr_tdata = 'hCAFE0003;
+		tlp_demuxer_cq_s_axis_ap_tlp_hdr_tkeep = 0;
+		tlp_demuxer_cq_s_axis_ap_tlp_hdr_tlast = 0;
+		tlp_demuxer_cq_s_axis_ap_tvalid = 0;
 
-				STATE_DEMUX_RC_DW3_2:
-					if(s_axis_rx_fire) begin
-						rc_grp_idx <= s_axis_rx_tdata[(8+4) +: RC_GRP_CNT_WIDTH];
-						rc_desc_idx <= s_axis_rx_tdata[8 +: RC_DESC_GRP_CNT_WIDTH];
-						rc_tdata <= s_axis_rx_tdata;
-						rc_tkeep <= s_axis_rx_tkeep;
-						rc_tlast <= s_axis_rx_tlast;
-						rc_tuser <= s_axis_rx_tuser;
-					end
-
-				STATE_DEMUX_RC, STATE_DEMUX_RC_DESC:
-					if(s_axis_rx_fire) begin
-						rc_tdata <= s_axis_rx_tdata;
-						rc_tkeep <= s_axis_rx_tkeep;
-						rc_tlast <= s_axis_rx_tlast;
-						rc_tuser <= s_axis_rx_tuser;
-					end
-			endcase
-		end
+		case(ap_state)
+			AP_STATE_DEMUX_CQ: begin
+				if(tlp_demuxer_cq_busy) begin
+					tlp_demuxer_cq_s_axis_ap_tlp_hdr_tdata = {
+						tlp_hdr_tdata[1], tlp_hdr_tdata[0]
+					};
+					tlp_demuxer_cq_s_axis_ap_tlp_hdr_tkeep = {
+						tlp_hdr_tkeep[1], tlp_hdr_tkeep[0]
+					};
+					tlp_demuxer_cq_s_axis_ap_tlp_hdr_tlast = {
+						tlp_hdr_tlast[1], tlp_hdr_tlast[0]
+					};
+					tlp_demuxer_cq_s_axis_ap_tvalid = 1;
+				end
+			end
+		endcase
 	end
+
+	// @COMB tlp_demuxer_cq_s_axis_rx_tdata, @COMB tlp_demuxer_cq_s_axis_rx_tkeep,
+	// @COMB tlp_demuxer_cq_s_axis_rx_tlast, @COMB tlp_demuxer_cq_s_axis_rx_tvalid,
+	// @COMB tlp_demuxer_cq_s_axis_rx_tuser
+	always @(*) begin
+		tlp_demuxer_cq_s_axis_rx_tdata = 'hCAFE0004;
+		tlp_demuxer_cq_s_axis_rx_tkeep = 0;
+		tlp_demuxer_cq_s_axis_rx_tlast = 0;
+		tlp_demuxer_cq_s_axis_rx_tvalid = 0;
+		tlp_demuxer_cq_s_axis_rx_tuser = 0;
+
+		case(ap_state)
+			AP_STATE_DEMUX_CQ: begin
+				if(! tlp_demuxer_cq_busy) begin
+					tlp_demuxer_cq_s_axis_rx_tdata = s_axis_rx_tdata;
+					tlp_demuxer_cq_s_axis_rx_tkeep = s_axis_rx_tkeep;
+					tlp_demuxer_cq_s_axis_rx_tlast = s_axis_rx_tlast;
+					tlp_demuxer_cq_s_axis_rx_tvalid = s_axis_rx_tvalid;
+					tlp_demuxer_cq_s_axis_rx_tuser = s_axis_rx_tuser;
+				end
+			end
+		endcase
+	end
+
+	tlp_demuxer_cq #(
+		.C_DATA_WIDTH(C_DATA_WIDTH),
+		.C_USER_WIDTH(C_USER_WIDTH),
+		.C_TLP_HDR_COUNT(TLP_HDR_COUNT)
+	) tlp_demuxer_cq_U (
+		.clk(clk),
+		.rst_n(rst_n),
+
+		.s_axis_rx_tdata(tlp_demuxer_cq_s_axis_rx_tdata),
+		.s_axis_rx_tkeep(tlp_demuxer_cq_s_axis_rx_tkeep),
+		.s_axis_rx_tlast(tlp_demuxer_cq_s_axis_rx_tlast),
+		.s_axis_rx_tvalid(tlp_demuxer_cq_s_axis_rx_tvalid),
+		.s_axis_rx_tready(tlp_demuxer_cq_s_axis_rx_tready),
+		.s_axis_rx_tuser(tlp_demuxer_cq_s_axis_rx_tuser),
+
+		.m_axis_cq_tdata(m_axis_cq_tdata),
+		.m_axis_cq_tkeep(m_axis_cq_tkeep),
+		.m_axis_cq_tlast(m_axis_cq_tlast),
+		.m_axis_cq_tvalid(m_axis_cq_tvalid),
+		.m_axis_cq_tready(m_axis_cq_tready),
+
+		.s_axis_ap_tlp_hdr_tdata(tlp_demuxer_cq_s_axis_ap_tlp_hdr_tdata),
+		.s_axis_ap_tlp_hdr_tkeep(tlp_demuxer_cq_s_axis_ap_tlp_hdr_tkeep),
+		.s_axis_ap_tlp_hdr_tlast(tlp_demuxer_cq_s_axis_ap_tlp_hdr_tlast),
+		.s_axis_ap_tvalid(tlp_demuxer_cq_s_axis_ap_tvalid),
+		.s_axis_ap_tready(tlp_demuxer_cq_s_axis_ap_tready)
+	);
+
+	assign tlp_demuxer_cq_s_axis_rx_fire = tlp_demuxer_cq_s_axis_rx_tready && tlp_demuxer_cq_s_axis_rx_tvalid;
+	assign tlp_demuxer_cq_s_axis_ap_fire = tlp_demuxer_cq_s_axis_ap_tready && tlp_demuxer_cq_s_axis_ap_tvalid;
+
+	// @COMB tlp_demuxer_rc_desc_s_axis_ap_tlp_hdr_tdata, @COMB tlp_demuxer_rc_desc_s_axis_ap_tlp_hdr_tkeep,
+	// @COMB tlp_demuxer_rc_desc_s_axis_ap_tlp_hdr_tlast, @COMB tlp_demuxer_rc_desc_s_axis_ap_tvalid
+	always @(*) begin
+		tlp_demuxer_rc_desc_s_axis_ap_tlp_hdr_tdata = 'hCAFE0003;
+		tlp_demuxer_rc_desc_s_axis_ap_tlp_hdr_tkeep = 0;
+		tlp_demuxer_rc_desc_s_axis_ap_tlp_hdr_tlast = 0;
+		tlp_demuxer_rc_desc_s_axis_ap_tvalid = 0;
+
+		case(ap_state)
+			AP_STATE_DEMUX_RC_DESC: begin
+				if(tlp_demuxer_rc_desc_busy) begin
+					tlp_demuxer_rc_desc_s_axis_ap_tlp_hdr_tdata = {
+						tlp_hdr_tdata[1], tlp_hdr_tdata[0]
+					};
+					tlp_demuxer_rc_desc_s_axis_ap_tlp_hdr_tkeep = {
+						tlp_hdr_tkeep[1], tlp_hdr_tkeep[0]
+					};
+					tlp_demuxer_rc_desc_s_axis_ap_tlp_hdr_tlast = {
+						tlp_hdr_tlast[1], tlp_hdr_tlast[0]
+					};
+					tlp_demuxer_rc_desc_s_axis_ap_tvalid = 1;
+				end
+			end
+		endcase
+	end
+
+	// @COMB tlp_demuxer_rc_desc_s_axis_rx_tdata, @COMB tlp_demuxer_rc_desc_s_axis_rx_tkeep,
+	// @COMB tlp_demuxer_rc_desc_s_axis_rx_tlast, @COMB tlp_demuxer_rc_desc_s_axis_rx_tvalid,
+	// @COMB tlp_demuxer_rc_desc_s_axis_rx_tuser
+	always @(*) begin
+		tlp_demuxer_rc_desc_s_axis_rx_tdata = 'hCAFE0004;
+		tlp_demuxer_rc_desc_s_axis_rx_tkeep = 0;
+		tlp_demuxer_rc_desc_s_axis_rx_tlast = 0;
+		tlp_demuxer_rc_desc_s_axis_rx_tvalid = 0;
+		tlp_demuxer_rc_desc_s_axis_rx_tuser = 0;
+
+		case(ap_state)
+			AP_STATE_DEMUX_RC_DESC: begin
+				if(! tlp_demuxer_rc_desc_busy) begin
+					tlp_demuxer_rc_desc_s_axis_rx_tdata = s_axis_rx_tdata;
+					tlp_demuxer_rc_desc_s_axis_rx_tkeep = s_axis_rx_tkeep;
+					tlp_demuxer_rc_desc_s_axis_rx_tlast = s_axis_rx_tlast;
+					tlp_demuxer_rc_desc_s_axis_rx_tvalid = s_axis_rx_tvalid;
+					tlp_demuxer_rc_desc_s_axis_rx_tuser = s_axis_rx_tuser;
+				end
+			end
+		endcase
+	end
+
+	assign m00_axis_rc_desc_tdata = m_axis_rc_desc_tdata[0];
+	assign m00_axis_rc_desc_tkeep = m_axis_rc_desc_tkeep[0];
+	assign m00_axis_rc_desc_tlast = m_axis_rc_desc_tlast[0];
+	assign m00_axis_rc_desc_tvalid = m_axis_rc_desc_tvalid[0];
+	assign m_axis_rc_desc_tready[0] = m00_axis_rc_desc_tready;
+
+	assign m01_axis_rc_desc_tdata = m_axis_rc_desc_tdata[1];
+	assign m01_axis_rc_desc_tkeep = m_axis_rc_desc_tkeep[1];
+	assign m01_axis_rc_desc_tlast = m_axis_rc_desc_tlast[1];
+	assign m01_axis_rc_desc_tvalid = m_axis_rc_desc_tvalid[1];
+	assign m_axis_rc_desc_tready[1] = m01_axis_rc_desc_tready;
+
+	assign m02_axis_rc_desc_tdata = m_axis_rc_desc_tdata[2];
+	assign m02_axis_rc_desc_tkeep = m_axis_rc_desc_tkeep[2];
+	assign m02_axis_rc_desc_tlast = m_axis_rc_desc_tlast[2];
+	assign m02_axis_rc_desc_tvalid = m_axis_rc_desc_tvalid[2];
+	assign m_axis_rc_desc_tready[2] = m02_axis_rc_desc_tready;
+
+	assign m03_axis_rc_desc_tdata = m_axis_rc_desc_tdata[3];
+	assign m03_axis_rc_desc_tkeep = m_axis_rc_desc_tkeep[3];
+	assign m03_axis_rc_desc_tlast = m_axis_rc_desc_tlast[3];
+	assign m03_axis_rc_desc_tvalid = m_axis_rc_desc_tvalid[3];
+	assign m_axis_rc_desc_tready[3] = m03_axis_rc_desc_tready;
+
+	tlp_demuxer_rc_desc #(
+		.C_DATA_WIDTH(C_DATA_WIDTH),
+		.C_USER_WIDTH(C_USER_WIDTH),
+		.C_TLP_HDR_COUNT(TLP_HDR_COUNT),
+		.C_RC_DESC_COUNT(RC_DESC_COUNT)
+	) tlp_demuxer_rc_desc_U (
+		.clk(clk),
+		.rst_n(rst_n),
+
+		.s_axis_rx_tdata(tlp_demuxer_rc_desc_s_axis_rx_tdata),
+		.s_axis_rx_tkeep(tlp_demuxer_rc_desc_s_axis_rx_tkeep),
+		.s_axis_rx_tlast(tlp_demuxer_rc_desc_s_axis_rx_tlast),
+		.s_axis_rx_tvalid(tlp_demuxer_rc_desc_s_axis_rx_tvalid),
+		.s_axis_rx_tready(tlp_demuxer_rc_desc_s_axis_rx_tready),
+		.s_axis_rx_tuser(tlp_demuxer_rc_desc_s_axis_rx_tuser),
+
+		.m_axis_rc_desc_tdata({m_axis_rc_desc_tdata[3], m_axis_rc_desc_tdata[2], m_axis_rc_desc_tdata[1], m_axis_rc_desc_tdata[0]}),
+		.m_axis_rc_desc_tkeep({m_axis_rc_desc_tkeep[3], m_axis_rc_desc_tkeep[2], m_axis_rc_desc_tkeep[1], m_axis_rc_desc_tkeep[0]}),
+		.m_axis_rc_desc_tlast({m_axis_rc_desc_tlast[3], m_axis_rc_desc_tlast[2], m_axis_rc_desc_tlast[1], m_axis_rc_desc_tlast[0]}),
+		.m_axis_rc_desc_tvalid({m_axis_rc_desc_tvalid[3], m_axis_rc_desc_tvalid[2], m_axis_rc_desc_tvalid[1], m_axis_rc_desc_tvalid[0]}),
+		.m_axis_rc_desc_tready({m_axis_rc_desc_tready[3], m_axis_rc_desc_tready[2], m_axis_rc_desc_tready[1], m_axis_rc_desc_tready[0]}),
+
+		.s_axis_ap_tlp_hdr_tdata(tlp_demuxer_rc_desc_s_axis_ap_tlp_hdr_tdata),
+		.s_axis_ap_tlp_hdr_tkeep(tlp_demuxer_rc_desc_s_axis_ap_tlp_hdr_tkeep),
+		.s_axis_ap_tlp_hdr_tlast(tlp_demuxer_rc_desc_s_axis_ap_tlp_hdr_tlast),
+		.s_axis_ap_tvalid(tlp_demuxer_rc_desc_s_axis_ap_tvalid),
+		.s_axis_ap_tready(tlp_demuxer_rc_desc_s_axis_ap_tready)
+	);
+
+	assign tlp_demuxer_rc_desc_s_axis_rx_fire = tlp_demuxer_rc_desc_s_axis_rx_tready && tlp_demuxer_rc_desc_s_axis_rx_tvalid;
+	assign tlp_demuxer_rc_desc_s_axis_ap_fire = tlp_demuxer_rc_desc_s_axis_ap_tready && tlp_demuxer_rc_desc_s_axis_ap_tvalid;
+
+	// @COMB tlp_demuxer_rc_grp_s_axis_ap_tlp_hdr_tdata, @COMB tlp_demuxer_rc_grp_s_axis_ap_tlp_hdr_tkeep,
+	// @COMB tlp_demuxer_rc_grp_s_axis_ap_tlp_hdr_tlast, @COMB tlp_demuxer_rc_grp_s_axis_ap_tvalid
+	always @(*) begin
+		tlp_demuxer_rc_grp_s_axis_ap_tlp_hdr_tdata = 'hCAFE0005;
+		tlp_demuxer_rc_grp_s_axis_ap_tlp_hdr_tkeep = 0;
+		tlp_demuxer_rc_grp_s_axis_ap_tlp_hdr_tlast = 0;
+		tlp_demuxer_rc_grp_s_axis_ap_tvalid = 0;
+
+		case(ap_state)
+			AP_STATE_DEMUX_RC_GRP: begin
+				if(tlp_demuxer_rc_grp_busy) begin
+					tlp_demuxer_rc_grp_s_axis_ap_tlp_hdr_tdata = {
+						tlp_hdr_tdata[1], tlp_hdr_tdata[0]
+					};
+					tlp_demuxer_rc_grp_s_axis_ap_tlp_hdr_tkeep = {
+						tlp_hdr_tkeep[1], tlp_hdr_tkeep[0]
+					};
+					tlp_demuxer_rc_grp_s_axis_ap_tlp_hdr_tlast = {
+						tlp_hdr_tlast[1], tlp_hdr_tlast[0]
+					};
+					tlp_demuxer_rc_grp_s_axis_ap_tvalid = 1;
+				end
+			end
+		endcase
+	end
+
+	// @COMB tlp_demuxer_rc_grp_s_axis_rx_tdata, @COMB tlp_demuxer_rc_grp_s_axis_rx_tkeep,
+	// @COMB tlp_demuxer_rc_grp_s_axis_rx_tlast, @COMB tlp_demuxer_rc_grp_s_axis_rx_tvalid,
+	// @COMB tlp_demuxer_rc_grp_s_axis_rx_tuser
+	always @(*) begin
+		tlp_demuxer_rc_grp_s_axis_rx_tdata = 'hCAFE0006;
+		tlp_demuxer_rc_grp_s_axis_rx_tkeep = 0;
+		tlp_demuxer_rc_grp_s_axis_rx_tlast = 0;
+		tlp_demuxer_rc_grp_s_axis_rx_tvalid = 0;
+		tlp_demuxer_rc_grp_s_axis_rx_tuser = 0;
+
+		case(ap_state)
+			AP_STATE_DEMUX_RC_GRP: begin
+				if(! tlp_demuxer_rc_grp_busy) begin
+					tlp_demuxer_rc_grp_s_axis_rx_tdata = s_axis_rx_tdata;
+					tlp_demuxer_rc_grp_s_axis_rx_tkeep = s_axis_rx_tkeep;
+					tlp_demuxer_rc_grp_s_axis_rx_tlast = s_axis_rx_tlast;
+					tlp_demuxer_rc_grp_s_axis_rx_tvalid = s_axis_rx_tvalid;
+					tlp_demuxer_rc_grp_s_axis_rx_tuser = s_axis_rx_tuser;
+				end
+			end
+		endcase
+	end
+
+	assign m00_axis_rc_grp_tdata = m_axis_rc_grp_tdata[0];
+	assign m00_axis_rc_grp_tkeep = m_axis_rc_grp_tkeep[0];
+	assign m00_axis_rc_grp_tlast = m_axis_rc_grp_tlast[0];
+	assign m00_axis_rc_grp_tvalid = m_axis_rc_grp_tvalid[0];
+	assign m_axis_rc_grp_tready[0] = m00_axis_rc_grp_tready;
+
+	assign m01_axis_rc_grp_tdata = m_axis_rc_grp_tdata[1];
+	assign m01_axis_rc_grp_tkeep = m_axis_rc_grp_tkeep[1];
+	assign m01_axis_rc_grp_tlast = m_axis_rc_grp_tlast[1];
+	assign m01_axis_rc_grp_tvalid = m_axis_rc_grp_tvalid[1];
+	assign m_axis_rc_grp_tready[1] = m01_axis_rc_grp_tready;
+
+	tlp_demuxer_rc_grp #(
+		.C_DATA_WIDTH(C_DATA_WIDTH),
+		.C_USER_WIDTH(C_USER_WIDTH),
+		.C_TLP_HDR_COUNT(TLP_HDR_COUNT),
+		.C_RC_GRP_COUNT(RC_GRP_COUNT)
+	) tlp_demuxer_rc_grp_U (
+		.clk(clk),
+		.rst_n(rst_n),
+
+		.s_axis_rx_tdata(tlp_demuxer_rc_grp_s_axis_rx_tdata),
+		.s_axis_rx_tkeep(tlp_demuxer_rc_grp_s_axis_rx_tkeep),
+		.s_axis_rx_tlast(tlp_demuxer_rc_grp_s_axis_rx_tlast),
+		.s_axis_rx_tvalid(tlp_demuxer_rc_grp_s_axis_rx_tvalid),
+		.s_axis_rx_tready(tlp_demuxer_rc_grp_s_axis_rx_tready),
+		.s_axis_rx_tuser(tlp_demuxer_rc_grp_s_axis_rx_tuser),
+
+		.m_axis_rc_grp_tdata({m_axis_rc_grp_tdata[1], m_axis_rc_grp_tdata[0]}),
+		.m_axis_rc_grp_tkeep({m_axis_rc_grp_tkeep[1], m_axis_rc_grp_tkeep[0]}),
+		.m_axis_rc_grp_tlast({m_axis_rc_grp_tlast[1], m_axis_rc_grp_tlast[0]}),
+		.m_axis_rc_grp_tvalid({m_axis_rc_grp_tvalid[1], m_axis_rc_grp_tvalid[0]}),
+		.m_axis_rc_grp_tready({m_axis_rc_grp_tready[1], m_axis_rc_grp_tready[0]}),
+
+		.s_axis_ap_tlp_hdr_tdata(tlp_demuxer_rc_grp_s_axis_ap_tlp_hdr_tdata),
+		.s_axis_ap_tlp_hdr_tkeep(tlp_demuxer_rc_grp_s_axis_ap_tlp_hdr_tkeep),
+		.s_axis_ap_tlp_hdr_tlast(tlp_demuxer_rc_grp_s_axis_ap_tlp_hdr_tlast),
+		.s_axis_ap_tvalid(tlp_demuxer_rc_grp_s_axis_ap_tvalid),
+		.s_axis_ap_tready(tlp_demuxer_rc_grp_s_axis_ap_tready)
+	);
+
+	assign tlp_demuxer_rc_grp_s_axis_rx_fire = tlp_demuxer_rc_grp_s_axis_rx_tready && tlp_demuxer_rc_grp_s_axis_rx_tvalid;
+	assign tlp_demuxer_rc_grp_s_axis_ap_fire = tlp_demuxer_rc_grp_s_axis_ap_tready && tlp_demuxer_rc_grp_s_axis_ap_tvalid;
 endmodule
