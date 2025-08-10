@@ -219,6 +219,10 @@ module tlp_xdma_desc_rd #(
 								desc_tlast <= s_axis_rc_desc_tlast;
 								desc_tkeep <= s_axis_rc_desc_tkeep;
 
+								if(s_axis_rc_desc_tlast) begin
+									rx_tlp_hdr_idx <= 0;
+								end
+
 								if(desc_payload_idx == 7) begin
 									ap_state <= AP_STATE_WR_FIFO;
 								end else begin
@@ -236,6 +240,10 @@ module tlp_xdma_desc_rd #(
 								desc_payload[desc_payload_idx + 0] <= tlp_pcie_dw0;
 								desc_tlast <= s_axis_rc_desc_tlast;
 								desc_tkeep <= s_axis_rc_desc_tkeep;
+
+								if(s_axis_rc_desc_tlast) begin
+									rx_tlp_hdr_idx <= 0;
+								end
 
 								case(s_axis_rc_desc_tkeep)
 									'hFF: begin
