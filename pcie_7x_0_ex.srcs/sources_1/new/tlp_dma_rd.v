@@ -91,17 +91,14 @@ module tlp_dma_rd #(
 	integer i;
 
 	reg [AP_STATE_WIDTH-1:0] ap_state;
+	reg [SIZE_WIDTH-1:0]     size_int;
 	reg [31:0]               ERR_MASK_next;
 	reg [1:0]                tlp_hdr_idx;
-	reg [63:0]               buf_addr_int;
-	wire [63:0]              buf_addr_next;
-	wire [31:0]              buf_addr_lo;
-	wire [31:0]              buf_addr_hi;
-	reg                      buf_addr_32bit;
-	reg [SIZE_WIDTH-1:0]     addr_adder_inc;
-	reg [31:0]               desc_buf_size_int, desc_buf_size_next;
-	reg [SIZE_WIDTH-1:0]     size_int, size_next;
-	reg [BURST_WIDTH-1:0]    burst_bytes_int;
+	reg [63:0]               desc_addr_int;
+	reg [31:0]               desc_bytes_int;
+	reg                      desc_addr_32bit;
+	reg [63:0]               desc_addr_next_int;
+	reg [BURST_WIDTH-1:0]    burst_bytes;
 
 	wire m_axis_rr_fire;
 
@@ -111,7 +108,7 @@ module tlp_dma_rd #(
 	wire       tlp_hdr_td;
 	wire       tlp_hdr_ep;
 	wire [1:0] tlp_hdr_attr;
-	wire [9:0] tlp_hdr_len;
+	reg [9:0]  tlp_hdr_len;
 	wire [7:0] tlp_hdr_tag [C_RC_COUNT-1:0];
 	wire [3:0] tlp_hdr_last_be;
 	wire [3:0] tlp_hdr_first_be;
@@ -124,9 +121,6 @@ module tlp_dma_rd #(
 	assign ap_done = (ap_state == AP_STATE_FINISH);
 	assign ap_ready = ap_done;
 
-	assign buf_addr_lo = {buf_addr_int[31:2], 2'b00};
-	assign buf_addr_hi = buf_addr_int[63:32];
-
 	addr_adder #(
 		.C_INC_WIDTH(SIZE_WIDTH)
 	) addr_adder_U (
@@ -137,12 +131,11 @@ module tlp_dma_rd #(
 		.addr_next(buf_addr_next)
 	);
 
-	assign tlp_hdr_fmt_type = (buf_addr_32bit ? TLP_MEM_RD32_FMT_TYPE : TLP_MEM_RD64_FMT_TYPE);
+	assign tlp_hdr_fmt_type = (desc_addr_32bit ? TLP_MEM_RD32_FMT_TYPE : TLP_MEM_RD64_FMT_TYPE);
 	assign tlp_hdr_tc = 3'b0;
 	assign tlp_hdr_td = 1'b0;
 	assign tlp_hdr_ep = 1'b0;
 	assign tlp_hdr_attr = 2'b0;
-	assign tlp_hdr_len = (burst_bytes_int >> 2); // measured by DW unit
 
 	generate
 		for(gen_i = 0;gen_i < C_RC_COUNT;gen_i = gen_i + 1) begin
@@ -157,52 +150,60 @@ module tlp_dma_rd #(
 	always @(posedge clk or negedge rst_n) begin
 		if(~rst_n) begin
 			ap_state <= AP_STATE_IDLE;
+			size_int <= 0;
 			tlp_hdr_idx <= 0;
+			tlp_hdr_len <= 0;
+			desc_addr_int <= 0;
+			desc_bytes_int <= 0;
+			desc_addr_32bit <= 0;
+			desc_addr_next_int <= 0;
 		end else begin
 			case(ap_state)
 				AP_STATE_IDLE:
 					if(ap_start) begin
 						ap_state <= AP_STATE_WAIT_DESC;
+						size_int <= (SIZE & ~32'b11);
 					end
 
 				AP_STATE_WAIT_DESC: begin
 					if(desc_rd_data_valid) begin
 						ap_state <= AP_STATE_DMA_RD_NEXT;
+						desc_addr_int <= desc_rd_rd_data[63:0];
+						desc_bytes_int <= desc_rd_rd_data[64 +: 32];
+						desc_addr_32bit <= (desc_rd_rd_data[32 +: 32] == 32'b0);
 					end
 				end
-
-				AP_STATE_DMA_RD: begin
-					case(tlp_hdr_idx)
-						0: begin
-							if(m_axis_rr_fire) begin
-								tlp_hdr_idx <= 1;
-							end
-						end
-
-						1: begin
-							if(m_axis_rr_fire) begin
-								tlp_hdr_idx <= 2;
-							end
-						end
-
-						2: begin
-							ap_state <= AP_STATE_DMA_RD_NEXT;
-
-							if(size_next == 0) begin
-								ap_state <= AP_STATE_WAIT_TX;
-							end else if(desc_buf_size_next == 0) begin
-								ap_state <= AP_STATE_WAIT_DESC;
-							end
-						end
-					endcase
-				end
-
 
 				AP_STATE_DMA_RD_NEXT: begin
 					if(dma_rd_burst_s_axis_ap_fire) begin
 						ap_state <= AP_STATE_DMA_RD;
 						tlp_hdr_idx <= 0;
+						tlp_hdr_len <= (burst_bytes >> 2);
+						desc_addr_next_int <= desc_addr_int + burst_bytes;
+						desc_bytes_int <= desc_bytes_int - burst_bytes;
+						size_int <= size_int - burst_bytes;
 					end
+				end
+
+				AP_STATE_DMA_RD: begin
+					case(tlp_hdr_idx)
+						0, 1: begin
+							if(m_axis_rr_fire) begin
+								tlp_hdr_idx <= tlp_hdr_idx + 1;
+							end
+						end
+
+						2: begin
+							ap_state <= AP_STATE_DMA_RD_NEXT;
+							desc_addr_int <= desc_addr_next_int;
+
+							if(size_int == 0) begin
+								ap_state <= AP_STATE_WAIT_TX;
+							end else if(desc_bytes_int == 0) begin
+								ap_state <= AP_STATE_WAIT_DESC;
+							end
+						end
+					endcase
 				end
 
 				AP_STATE_WAIT_TX: begin
@@ -220,6 +221,21 @@ module tlp_dma_rd #(
 				ap_state <= AP_STATE_ERROR;
 			end
 		end
+	end
+
+	// @COMB burst_bytes
+	always @(*) begin
+		burst_bytes = 0;
+
+		case(ap_state)
+			AP_STATE_DMA_RD_NEXT: begin
+				if(desc_bytes_int > size_int) begin
+					burst_bytes = (size_int > C_MAX_BURST_SIZE ? C_MAX_BURST_SIZE : size_int);
+				end else begin
+					burst_bytes = (desc_bytes_int > C_MAX_BURST_SIZE ? C_MAX_BURST_SIZE : desc_bytes_int);
+				end
+			end
+		endcase
 	end
 
 	// @FF desc_rd_ap_start
@@ -294,20 +310,20 @@ module tlp_dma_rd #(
 						m_axis_rr_tlast = 1;
 						m_axis_rr_tvalid = 1;
 
-						if(buf_addr_32bit) begin
+						if(desc_addr_32bit) begin
 							m_axis_rr_tdata = {
 								// DW3
 								32'b0,
-								// DW2 Addr
-								buf_addr_lo
+								// DW2 Addr LO
+								{desc_addr_int[31:2], 2'b00}
 							};
 							m_axis_rr_tkeep = 8'h0F;
 						end else begin
 							m_axis_rr_tdata = {
 								// DW3 Addr LO
-								buf_addr_lo,
+								{desc_addr_int[31:2], 2'b00},
 								// DW2 Addr HI
-								buf_addr_hi
+								desc_addr_int[63:32]
 							};
 							m_axis_rr_tkeep = 8'hFF;
 						end
@@ -318,61 +334,6 @@ module tlp_dma_rd #(
 	end
 
 	assign m_axis_rr_fire = m_axis_rr_tready && m_axis_rr_tvalid;
-
-	// @FF buf_addr_int, @FF buf_addr_32bit, @FF addr_adder_inc, @FF size_int, @FF size_next,
-	// @FF desc_buf_size_int, @FF desc_buf_size_next, @FF burst_bytes_int
-	always @(posedge clk or negedge rst_n) begin
-		if(~rst_n) begin
-			buf_addr_int <= 'hCAFE0001; // for debug purpose
-			buf_addr_32bit <= 0;
-			addr_adder_inc <= 0;
-			size_int <= 0;
-			size_next <= 0;
-			desc_buf_size_int <= 'hCAFE0002; // for debug purpose
-			desc_buf_size_next <= 0;
-			burst_bytes_int <= 0;
-		end else begin
-			case(ap_state)
-				AP_STATE_IDLE: begin
-					if(ap_start) begin
-						size_int <= (SIZE & ~32'b11);
-					end
-				end
-
-				AP_STATE_WAIT_DESC: begin
-					if(desc_rd_data_valid) begin
-						buf_addr_int <= desc_rd_rd_data[63:0];
-						buf_addr_32bit <= (desc_rd_rd_data[63:32] == 32'b0);
-						desc_buf_size_int <= desc_rd_rd_data[64 +: 32];
-					end
-				end
-
-				AP_STATE_DMA_RD: begin
-					case(tlp_hdr_idx)
-						2: begin
-							buf_addr_int <= buf_addr_next;
-							size_int <= size_next;
-							desc_buf_size_int <= desc_buf_size_next;
-						end
-					endcase
-				end
-
-				AP_STATE_DMA_RD_NEXT: begin
-					if(desc_buf_size_int > C_MAX_BURST_SIZE) begin
-						addr_adder_inc <= C_MAX_BURST_SIZE;
-						size_next <= size_int - C_MAX_BURST_SIZE;
-						burst_bytes_int <= C_MAX_BURST_SIZE;
-						desc_buf_size_next <= desc_buf_size_int - C_MAX_BURST_SIZE;
-					end else begin
-						addr_adder_inc <= desc_buf_size_int;
-						size_next <= size_int - desc_buf_size_int;
-						burst_bytes_int <= desc_buf_size_int;
-						desc_buf_size_next <= 0;
-					end
-				end
-			endcase
-		end
-	end
 
 	assign dma_rd_burst_s_axis_ap_fire = dma_rd_burst_s_axis_ap_tready & dma_rd_burst_s_axis_ap_tvalid;
 
@@ -399,12 +360,7 @@ module tlp_dma_rd #(
 
 		case(ap_state)
 			AP_STATE_DMA_RD_NEXT: begin
-				if(size_int > C_MAX_BURST_SIZE) begin
-					dma_rd_burst_s_axis_ap_burst_bytes = C_MAX_BURST_SIZE;
-				end else begin
-					dma_rd_burst_s_axis_ap_burst_bytes = size_int;
-				end
-
+				dma_rd_burst_s_axis_ap_burst_bytes = burst_bytes;
 				dma_rd_burst_s_axis_ap_tvalid = 1;
 			end
 		endcase
