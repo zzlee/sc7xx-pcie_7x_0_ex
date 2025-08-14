@@ -11,5 +11,7 @@
 #
 SEG_zzlab_env_ctrl_0_reg0,/tlp_reg_0/m_axi_ctrl,/zzlab_env_ctrl_0/s_axi_ctrl/reg0,0x000,4K
 SEG_pcie_intr_ctrl_reg0,/tlp_reg_0/m_axi_ctrl,/pcie_intr/pcie_intr_ctrl/s_axi_ctrl/reg0,0x1000,4K
+SEG_v_axis_cvt_2_ctrl_0_reg0,/tlp_reg_0/m_axi_ctrl,/vsrc_0/v_axis_cvt_2_ctrl_0/s_axi_ctrl/reg0,0x2000,4K
 SEG_tlp_dma_wr_ctrl_reg0,/tlp_reg_0/m_axi_ctrl,/tlp_dma_wr_0/tlp_dma_wr_ctrl/s_axi_ctrl/reg0,0x10000,4K
 SEG_tlp_dma_rd_ctrl_reg0,/tlp_reg_0/m_axi_ctrl,/tlp_dma_rd_0/tlp_dma_rd_ctrl/s_axi_ctrl/reg0,0x11000,4K
+SEG_v_tpg_0_Reg,/tlp_reg_0/m_axi_ctrl,/vsrc_0/v_tpg_0/s_axi_CTRL/Reg,0x20000,64K
