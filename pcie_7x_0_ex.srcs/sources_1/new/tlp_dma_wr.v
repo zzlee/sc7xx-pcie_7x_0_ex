@@ -20,16 +20,20 @@
 //////////////////////////////////////////////////////////////////////////////////
 
 module tlp_dma_wr #(
-	parameter C_DATA_WIDTH     = 64,
-	parameter C_SRC_DATA_WIDTH = 32,
-	parameter C_MAX_WIDTH      = 4096,
-	parameter C_MAX_HEIGHT     = 2160,
-	parameter C_MAX_BURST_SIZE = 256, // bytes per burst (FIFO depth C_MAX_BURST_SIZE >> 2)
+	parameter C_DATA_WIDTH      = 64,
+	parameter C_MAX_WIDTH       = 4096,
+	parameter C_MAX_HEIGHT      = 2160,
+	parameter C_MAX_BURST_SIZE  = 256, // bytes per burst (FIFO depth C_MAX_BURST_SIZE >> 2)
+	parameter C_COMP_PER_PIXEL  = 3,
+	parameter C_BITS_PER_COMP   = 8,
+	parameter C_PIXELS_PER_BEAT = 4,
 
 	// Do not override parameters below this line
 	parameter KEEP_WIDTH     = C_DATA_WIDTH / 8,
-	parameter SRC_KEEP_WIDTH = C_SRC_DATA_WIDTH / 8,
-	parameter DESC_WIDTH     = 32+32+32 // {bytes, addr_hi, addr_lo}
+	parameter DESC_WIDTH     = 32+32+32, // {bytes, addr_hi, addr_lo}
+	parameter BITS_PER_PIXEL = C_BITS_PER_COMP * C_COMP_PER_PIXEL,
+	parameter S_DATA_WIDTH   = $floor(((BITS_PER_PIXEL * C_PIXELS_PER_BEAT) + 7) / 8) * 8,
+	parameter S_KEEP_WIDTH   = ((S_DATA_WIDTH + 7) / 8)
 ) (
 	input clk,
 	input rst_n,
@@ -49,21 +53,13 @@ module tlp_dma_wr #(
 	output reg                    m_axis_rr_tvalid,
 	input                         m_axis_rr_tready,
 
-	// S00 SRC
-	input [C_SRC_DATA_WIDTH-1:0] s00_axis_tdata,
-	input [SRC_KEEP_WIDTH-1:0]   s00_axis_tkeep,
-	input                        s00_axis_tlast,
-	input                        s00_axis_tvalid,
-	output                       s00_axis_tready,
-	input                        s00_axis_tuser,
-
-	// S01 SRC
-	input [C_SRC_DATA_WIDTH-1:0] s01_axis_tdata,
-	input [SRC_KEEP_WIDTH-1:0]   s01_axis_tkeep,
-	input                        s01_axis_tlast,
-	input                        s01_axis_tvalid,
-	output                       s01_axis_tready,
-	input                        s01_axis_tuser,
+	// SRC data
+	input [S_DATA_WIDTH-1:0] s_axis_tdata,
+	input [S_KEEP_WIDTH-1:0] s_axis_tkeep,
+	input                    s_axis_tlast,
+	input                    s_axis_tvalid,
+	output reg               s_axis_tready,
+	input                    s_axis_tuser,
 
 	input [15:0] cfg_completer_id,
 
@@ -84,6 +80,7 @@ module tlp_dma_wr #(
 	localparam BURST_WIDTH  = $clog2(C_MAX_BURST_SIZE + 1);
 	localparam MAX_SIZE     = C_MAX_WIDTH * C_MAX_HEIGHT * 4;
 	localparam SIZE_WIDTH   = $clog2(MAX_SIZE + 1);
+	localparam S_FIFO_WIDTH = S_DATA_WIDTH * 2;
 
 	localparam TLP_MEM_WR32_FMT_TYPE = 7'b10_00000;
 	localparam TLP_MEM_WR64_FMT_TYPE = 7'b11_00000;
@@ -95,15 +92,6 @@ module tlp_dma_wr #(
 	localparam AP_STATE_DMA_WR_NEXT = 3'd4;
 	localparam AP_STATE_ERROR       = 3'd7;
 	localparam AP_STATE_WIDTH       = 3;
-
-	localparam SRC_COUNT     = 2;
-	localparam SRC_CNT_WIDTH = $clog2(SRC_COUNT);
-
-	localparam SRC_STATE_IDLE   = 3'd0;
-	localparam SRC_STATE_FINISH = 3'd1;
-	localparam SRC_STATE_RX_DW0 = 3'd2;
-	localparam SRC_STATE_RX_DW1 = 3'd3;
-	localparam SRC_STATE_WIDTH  = 3;
 
 	genvar gen_i;
 	integer i;
@@ -117,10 +105,12 @@ module tlp_dma_wr #(
 	reg                      desc_addr_32bit;
 	reg [63:0]               desc_addr_next_int;
 	reg [BURST_WIDTH-1:0]    burst_bytes;
-	reg [1:0]                tlp_payload_dw_count;
-	reg [SRC_CNT_WIDTH-1:0]  src_idx_int;
+	reg [1:0]                tlp_payload_dws;
+	reg [3:0]                tlp_payload_bytes;
+	reg [6:0]                tlp_payload_bits;
 
 	wire m_axis_rr_fire;
+	wire s_axis_fire;
 
 	wire [7:0] tlp_hdr_tag;
 	wire [3:0] tlp_hdr_last_be;
@@ -132,36 +122,15 @@ module tlp_dma_wr #(
 	wire [1:0] tlp_hdr_attr;
 	reg [9:0]  tlp_hdr_len;
 
-	wire [C_SRC_DATA_WIDTH-1:0] s_axis_tdata [SRC_COUNT-1:0];
-	reg                         s_axis_tready [SRC_COUNT-1:0];
-	wire                        s_axis_tvalid [SRC_COUNT-1:0];
-	wire                        s_axis_fire [SRC_COUNT-1:0];
-
-	// src_fifo_U[SRC_COUNT]
-	reg [SRC_STATE_WIDTH-1:0]  src_fifo_state [SRC_COUNT-1:0];
-	reg [C_SRC_DATA_WIDTH-1:0] src_fifo_dw0 [SRC_COUNT-1:0];
-	reg                        src_fifo_wr_en [SRC_COUNT-1:0];
-	wire [C_DATA_WIDTH-1:0]    src_fifo_wr_data [SRC_COUNT-1:0];
-	reg                        src_fifo_rd_en [SRC_COUNT-1:0];
-	wire [C_DATA_WIDTH-1:0]    src_fifo_rd_data [SRC_COUNT-1:0];
-	wire                       src_fifo_data_valid [SRC_COUNT-1:0];
-	wire                       src_fifo_full [SRC_COUNT-1:0];
-	wire [31:0]                src_fifo_pcie_dw0;
-	wire [31:0]                src_fifo_pcie_dw1;
-	reg [31:0]                 src_fifo_last_dw [SRC_COUNT-1:0];
-	reg                        src_fifo_has_last_dw [SRC_COUNT-1:0];
+	reg [S_FIFO_WIDTH-1:0] s_fifo;
+	reg [4:0]              s_bytes;
+	reg [7:0]              s_bits;
+	wire [31:0]            s_pci_dw0;
+	wire [31:0]            s_pci_dw1;
 
 	assign ap_idle = (ap_state == AP_STATE_IDLE);
 	assign ap_done = (ap_state == AP_STATE_FINISH);
 	assign ap_ready = ap_done;
-
-	assign s_axis_tdata[0] = s00_axis_tdata;
-	assign s00_axis_tready = s_axis_tready[0];
-	assign s_axis_tvalid[0] = s00_axis_tvalid;
-
-	assign s_axis_tdata[1] = s01_axis_tdata;
-	assign s01_axis_tready = s_axis_tready[1];
-	assign s_axis_tvalid[1] = s01_axis_tvalid;
 
 	assign tlp_hdr_fmt_type = (desc_addr_32bit ? TLP_MEM_WR32_FMT_TYPE : TLP_MEM_WR64_FMT_TYPE);
 	assign tlp_hdr_tc = 3'b0;
@@ -172,159 +141,8 @@ module tlp_dma_wr #(
 	assign tlp_hdr_last_be = 4'b1111;
 	assign tlp_hdr_first_be = 4'b1111;
 
-	generate
-		for(gen_i = 0;gen_i < SRC_COUNT;gen_i = gen_i + 1) begin
-`ifdef USE_FIFO_FWFT
-			fifo_fwft #(
-				.DATA_WIDTH(C_DATA_WIDTH),
-				.DEPTH(MAX_BURST_DW)
-            ) src_fifo_U (
-				.clk(clk),
-				.rst_n(rst_n),
-				.wr_en(src_fifo_wr_en[gen_i]),
-				.wr_data(src_fifo_wr_data[gen_i]),
-				.rd_en(src_fifo_rd_en[gen_i]),
-				.rd_data(src_fifo_rd_data[gen_i]),
-				.full(src_fifo_full[gen_i]),
-				.empty(),
-				.data_valid(src_fifo_data_valid[gen_i])
-			);
-`else // USE_FIFO_FWFT
-			fifo_dma_wr src_fifo_U (
-				.clk(clk),
-				.srst(~rst_n),
-				.wr_en(src_fifo_wr_en[gen_i]),
-				.din(src_fifo_wr_data[gen_i]),
-				.rd_en(src_fifo_rd_en[gen_i]),
-				.dout(src_fifo_rd_data[gen_i]),
-				.full(src_fifo_full[gen_i]),
-				.empty(),
-				.valid(src_fifo_data_valid[gen_i])
-			);
-`endif // USE_FIFO_FWFT
-
-			// @FF src_fifo_state[gen_i], src_fifo_dw0[gen_i]
-			always @(posedge clk or negedge rst_n) begin
-				if(~rst_n) begin
-					src_fifo_state[gen_i] <= SRC_STATE_IDLE;
-					src_fifo_dw0[gen_i] <= 0;
-				end else begin
-					case(src_fifo_state[gen_i])
-						SRC_STATE_IDLE:
-							src_fifo_state[gen_i] <= SRC_STATE_RX_DW0;
-
-						SRC_STATE_RX_DW0:
-							if(s_axis_fire[gen_i]) begin
-								src_fifo_dw0[gen_i] <= s_axis_tdata[gen_i];
-								src_fifo_state[gen_i] <= SRC_STATE_RX_DW1;
-							end
-
-						SRC_STATE_RX_DW1:
-							if(s_axis_fire[gen_i]) begin
-								src_fifo_state[gen_i] <= SRC_STATE_RX_DW0;
-							end
-					endcase
-				end
-			end
-
-			// @COMB s_axis_tready[gen_i], @COMB src_fifo_wr_en[gen_i]
-			always @(*) begin
-				s_axis_tready[gen_i] = 0;
-				src_fifo_wr_en[gen_i] = 0;
-
-				case(src_fifo_state[gen_i])
-					SRC_STATE_RX_DW0: begin
-						s_axis_tready[gen_i] = 1;
-					end
-
-					SRC_STATE_RX_DW1: begin
-						s_axis_tready[gen_i] = !src_fifo_full[gen_i];
-						src_fifo_wr_en[gen_i] = s_axis_fire[gen_i];
-					end
-				endcase
-			end
-
-			assign src_fifo_wr_data[gen_i] = { s_axis_tdata[gen_i], src_fifo_dw0[gen_i] };
-			assign s_axis_fire[gen_i] = s_axis_tready[gen_i] && s_axis_tvalid[gen_i];
-		end
-	endgenerate
-
-	// @COMB src_fifo_rd_en[i]
-	always @(*) begin
-		for(i = 0;i < SRC_COUNT;i = i + 1) begin
-			src_fifo_rd_en[i] = 0;
-		end
-
-		case(ap_state)
-			AP_STATE_DMA_WR: begin
-				case(tlp_hdr_idx)
-					1: begin
-						if(desc_addr_32bit) begin
-							if(! src_fifo_has_last_dw[src_idx_int]) begin
-								src_fifo_rd_en[src_idx_int] = m_axis_rr_fire;
-							end
-						end
-					end
-
-					2: begin
-						if(m_axis_rr_tkeep == 8'hFF) begin
-							src_fifo_rd_en[src_idx_int] = m_axis_rr_fire;
-						end else begin
-							if(! src_fifo_has_last_dw[src_idx_int]) begin
-								src_fifo_rd_en[src_idx_int] = m_axis_rr_fire;
-							end
-						end
-					end
-				endcase
-			end
-		endcase
-	end
-
-	// @FF src_fifo_last_dw[i], @FF src_fifo_has_last_dw[i]
-	always @(posedge clk or negedge rst_n) begin
-		if(~rst_n) begin
-			for(i = 0;i < SRC_COUNT;i = i + 1) begin
-				src_fifo_last_dw[i] <= 0;
-				src_fifo_has_last_dw[i] <= 0;
-			end
-		end else begin
-			case(ap_state)
-				AP_STATE_DMA_WR: begin
-					case(tlp_hdr_idx)
-						1: begin
-							if(desc_addr_32bit) begin
-								if(m_axis_rr_fire) begin
-									if(src_fifo_has_last_dw[src_idx_int]) begin
-										src_fifo_has_last_dw[src_idx_int] <= 0;
-									end else begin
-										src_fifo_last_dw[src_idx_int] <= src_fifo_pcie_dw1;
-										src_fifo_has_last_dw[src_idx_int] <= 1;
-									end
-								end
-							end
-						end
-
-						2: begin
-							if(m_axis_rr_fire) begin
-								if(m_axis_rr_tkeep == 8'hFF) begin
-									if(src_fifo_has_last_dw[src_idx_int]) begin
-										src_fifo_last_dw[src_idx_int] <= src_fifo_pcie_dw1;
-									end
-								end else begin
-									if(src_fifo_has_last_dw[src_idx_int]) begin
-										src_fifo_has_last_dw[src_idx_int] <= 0;
-									end else begin
-										src_fifo_last_dw[src_idx_int] <= src_fifo_pcie_dw1;
-										src_fifo_has_last_dw[src_idx_int] <= 1;
-									end
-								end
-							end
-						end
-					endcase
-				end
-			endcase
-		end
-	end
+	assign m_axis_rr_fire = m_axis_rr_tready && m_axis_rr_tvalid;
+	assign s_axis_fire = s_axis_tready && s_axis_tvalid;
 
 	// @FF ap_state, @FF size_int, @FF tlp_hdr_idx, @FF tlp_hdr_len,
 	// @FF desc_addr_int, @FF desc_bytes_int, @FF desc_addr_32bit, @FF desc_addr_next_int
@@ -374,7 +192,7 @@ module tlp_dma_wr #(
 
 							1, 2: begin
 								tlp_hdr_idx <= 2;
-								tlp_hdr_len <= tlp_hdr_len - tlp_payload_dw_count;
+								tlp_hdr_len <= tlp_hdr_len - tlp_payload_dws;
 
 								if(m_axis_rr_tlast) begin
 									ap_state <= AP_STATE_DMA_WR_NEXT;
@@ -405,23 +223,12 @@ module tlp_dma_wr #(
 		end
 	end
 
-	// @FF src_idx_int
-	always @(posedge clk or negedge rst_n) begin
-		if(~rst_n) begin
-			src_idx_int <= 0;
-		end else begin
-			case(ap_state)
-				AP_STATE_DMA_WR_NEXT: begin
-					src_idx_int <= ((src_idx_int == 0) ? 1 : 0);
-				end
-			endcase
-		end
-	end
-
-	// @COMB burst_bytes, @COMB tlp_payload_dw_count
+	// @COMB burst_bytes, @COMB tlp_payload_dws, @COMB tlp_payload_bytes, @COMB tlp_payload_bits
 	always @(*) begin
 		burst_bytes = 0;
-		tlp_payload_dw_count = 0;
+		tlp_payload_dws = 0;
+		tlp_payload_bytes = 0;
+		tlp_payload_bits = 0;
 
 		case(ap_state)
 			AP_STATE_DMA_WR_NEXT: begin
@@ -435,11 +242,15 @@ module tlp_dma_wr #(
 			AP_STATE_DMA_WR: begin
 				case(tlp_hdr_idx)
 					1: begin
-						tlp_payload_dw_count = desc_addr_32bit ? 1 : 0;
+						tlp_payload_dws = desc_addr_32bit ? 1 : 0;
+						tlp_payload_bytes = desc_addr_32bit ? 4 : 0;
+						tlp_payload_bits = desc_addr_32bit ? 32 : 0;
 					end
 
 					2: begin
-						tlp_payload_dw_count = (m_axis_rr_tkeep == 'hFF ? 2 : 1);
+						tlp_payload_dws = (m_axis_rr_tkeep == 'hFF ? 2 : 1);
+						tlp_payload_bytes = (m_axis_rr_tkeep == 'hFF ? 8 : 4);
+						tlp_payload_bits = (m_axis_rr_tkeep == 'hFF ? 64 : 32);
 					end
 				endcase
 			end
@@ -479,9 +290,6 @@ module tlp_dma_wr #(
 			end
 		endcase
 	end
-
-	assign src_fifo_pcie_dw0 = {src_fifo_rd_data[src_idx_int][0*8 +: 8], src_fifo_rd_data[src_idx_int][1*8 +: 8], src_fifo_rd_data[src_idx_int][2*8 +: 8], src_fifo_rd_data[src_idx_int][3*8 +: 8]};
-	assign src_fifo_pcie_dw1 = {src_fifo_rd_data[src_idx_int][4*8 +: 8], src_fifo_rd_data[src_idx_int][5*8 +: 8], src_fifo_rd_data[src_idx_int][6*8 +: 8], src_fifo_rd_data[src_idx_int][7*8 +: 8]};
 
 	// @COMB m_axis_rr_tdata, @COMB m_axis_rr_tkeep, @COMB m_axis_rr_tlast, @COMB m_axis_rr_tvalid
 	always @(*) begin
@@ -524,11 +332,11 @@ module tlp_dma_wr #(
 							m_axis_rr_tlast = (tlp_hdr_len == 1);
 							m_axis_rr_tdata = {
 								// DW3 Data
-								src_fifo_has_last_dw[src_idx_int] ? src_fifo_last_dw[src_idx_int] : src_fifo_pcie_dw0,
+								s_pci_dw0,
 								// DW2 Addr LO
 								{desc_addr_int[31:2], 2'b00}
 							};
-							m_axis_rr_tvalid = src_fifo_has_last_dw[src_idx_int] ? 1 : src_fifo_data_valid[src_idx_int];
+							m_axis_rr_tvalid = (s_bytes >= tlp_payload_bytes);
 						end else begin
 							m_axis_rr_tlast = 0;
 							m_axis_rr_tdata = {
@@ -546,32 +354,17 @@ module tlp_dma_wr #(
 						m_axis_rr_tkeep = (tlp_hdr_len == 1 ? 8'h0F : 8'hFF);
 
 						if(m_axis_rr_tkeep == 8'hFF) begin
-							if(src_fifo_has_last_dw[src_idx_int]) begin
-								m_axis_rr_tdata = {
-									src_fifo_pcie_dw0,
-									src_fifo_last_dw[src_idx_int]
-								};
-							end else begin
-								m_axis_rr_tdata = {
-									src_fifo_pcie_dw1,
-									src_fifo_pcie_dw0
-								};
-							end
-							m_axis_rr_tvalid = src_fifo_data_valid[src_idx_int];
+							m_axis_rr_tdata = {
+								s_pci_dw1,
+								s_pci_dw0
+							};
+							m_axis_rr_tvalid = (s_bytes >= tlp_payload_bytes);
 						end else begin
-							if(src_fifo_has_last_dw[src_idx_int]) begin
-								m_axis_rr_tdata = {
-									32'd0,
-									src_fifo_last_dw[src_idx_int]
-								};
-								m_axis_rr_tvalid = 1;
-							end else begin
-								m_axis_rr_tdata = {
-									src_fifo_pcie_dw1,
-									src_fifo_pcie_dw0
-								};
-								m_axis_rr_tvalid = src_fifo_data_valid[src_idx_int];
-							end
+							m_axis_rr_tdata = {
+								32'd0,
+								s_pci_dw0
+							};
+							m_axis_rr_tvalid = (s_bytes >= tlp_payload_bytes);
 						end
 					end
 				endcase
@@ -579,7 +372,62 @@ module tlp_dma_wr #(
 		endcase
 	end
 
-	assign m_axis_rr_fire = m_axis_rr_tready && m_axis_rr_tvalid;
+	// @FF s_fifo, @FF s_bytes, @FF s_bits
+	always @(posedge clk or negedge rst_n) begin
+		if(~rst_n) begin
+			s_fifo <= 0;
+			s_bytes <= 0;
+			s_bits <= 0;
+		end else begin
+			case(ap_state)
+				AP_STATE_DMA_WR: begin
+					case(tlp_hdr_idx)
+						1, 2: begin
+							case({s_axis_fire, m_axis_rr_fire})
+								2'b01: begin
+									s_fifo <= (s_fifo >> tlp_payload_bits);
+									s_bytes <= s_bytes - tlp_payload_bytes;
+									s_bits <= s_bits - tlp_payload_bits;
+								end
+
+								2'b10: begin
+									s_fifo <= (s_axis_tdata << s_bits) | (s_fifo & (~({S_FIFO_WIDTH{1'b1}} << s_bits)));
+									s_bytes <= s_bytes + (S_DATA_WIDTH / 8);
+									s_bits <= s_bits + S_DATA_WIDTH;
+								end
+
+								2'b11: begin
+									s_fifo <= (s_axis_tdata << (s_bits + S_DATA_WIDTH - tlp_payload_bits));
+									s_bytes <= s_bytes + (S_DATA_WIDTH / 8) - tlp_payload_bytes;
+									s_bits <= s_bits + S_DATA_WIDTH - tlp_payload_bits;
+								end
+							endcase
+						end
+					endcase
+				end
+			endcase
+		end
+	end
+
+	assign s_pci_dw0 = {s_fifo[0*8 +: 8], s_fifo[1*8 +: 8], s_fifo[2*8 +: 8], s_fifo[3*8 +: 8]};
+	assign s_pci_dw1 = {s_fifo[4*8 +: 8], s_fifo[5*8 +: 8], s_fifo[6*8 +: 8], s_fifo[7*8 +: 8]};
+
+	// @COMB s_axis_tready
+	always @(*) begin
+		s_axis_tready = 0;
+
+		case(ap_state)
+			AP_STATE_DMA_WR: begin
+				case(tlp_hdr_idx)
+					1, 2: begin
+						if(s_bytes < tlp_payload_bytes) begin
+							s_axis_tready = 1;
+						end
+					end
+				endcase
+			end
+		endcase
+	end
 
 	// @FF ERR_MASK
 	always @(posedge clk or negedge rst_n) begin

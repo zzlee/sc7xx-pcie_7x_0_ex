@@ -27,7 +27,9 @@ module v_axis_cvt_2 #(
 	// Do not override parameters below this line
 	parameter BITS_PER_PIXEL = C_BITS_PER_COMP * C_COMP_PER_PIXEL,
 	parameter TDATA_IN_WIDTH = $floor(((BITS_PER_PIXEL * C_PIXELS_PER_BEAT) + 7) / 8) * 8,
-	parameter TDATA_OUT_WIDTH = $floor(((C_BITS_PER_COMP * C_PIXELS_PER_BEAT) + 7) / 8) * 8
+	parameter TDATA_OUT_WIDTH = $floor(((C_BITS_PER_COMP * C_PIXELS_PER_BEAT) + 7) / 8) * 8,
+	parameter TKEEP_IN_WIDTH = ((TDATA_IN_WIDTH + 7) / 8),
+	parameter TKEEP_OUT_WIDTH = ((TDATA_OUT_WIDTH + 7) / 8)
 ) (
 	input clk,
 	input rst_n,
@@ -47,6 +49,7 @@ module v_axis_cvt_2 #(
 
 	// AXI Stream Interface (Input)
 	input [TDATA_IN_WIDTH-1:0] s_axis_tdata,
+    input [TKEEP_IN_WIDTH-1:0] s_axis_tkeep,
 	input                      s_axis_tlast,
 	input                      s_axis_tuser,
 	input                      s_axis_tvalid,
@@ -54,12 +57,14 @@ module v_axis_cvt_2 #(
 
 	// AXI Stream Interface (Output)
 	output reg [TDATA_OUT_WIDTH-1:0] m00_axis_tdata,
+	output reg [TKEEP_OUT_WIDTH-1:0] m00_axis_tkeep,
 	output reg                       m00_axis_tlast,
 	output reg                       m00_axis_tuser,
 	output reg                       m00_axis_tvalid,
 	input                            m00_axis_tready,
 
 	output reg [TDATA_OUT_WIDTH-1:0] m01_axis_tdata,
+	output reg [TKEEP_OUT_WIDTH-1:0] m01_axis_tkeep,
 	output reg                       m01_axis_tlast,
 	output reg                       m01_axis_tuser,
 	output reg                       m01_axis_tvalid,
@@ -129,20 +134,25 @@ module v_axis_cvt_2 #(
 	// @COMB m01_axis_tdata, @COMB m01_axis_tlast, @COMB m01_axis_tuser
 	always @(*) begin
 		m00_axis_tdata = 0;
-		m01_axis_tdata = 0;
+		m00_axis_tkeep = 0;
 		m00_axis_tlast = 0;
-		m01_axis_tlast = 0;
 		m00_axis_tuser = 0;
+		m01_axis_tdata = 0;
+		m01_axis_tkeep = 0;
+		m01_axis_tlast = 0;
 		m01_axis_tuser = 0;
 
 		case(ap_state)
 			AP_STATE_RUN: begin
 				m00_axis_tlast = s_axis_tlast;
-				m01_axis_tlast = s_axis_tlast;
 				m00_axis_tuser = s_axis_tuser;
+				m01_axis_tlast = s_axis_tlast;
 				m01_axis_tuser = s_axis_tuser;
 
 				if(COLOR_FORMAT_IN == COLOR_FORMAT_YUV444 && COLOR_FORMAT_OUT == COLOR_FORMAT_YUV422) begin
+					m00_axis_tkeep = 'hF;
+					m01_axis_tkeep = 'hF;
+
 					// Y component
 					for(i = 0;i < C_PIXELS_PER_BEAT;i = i + 1) begin
 						m00_axis_tdata[C_BITS_PER_COMP*i +: C_BITS_PER_COMP] =
