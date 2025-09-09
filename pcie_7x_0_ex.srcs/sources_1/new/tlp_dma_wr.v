@@ -24,15 +24,11 @@ module tlp_dma_wr #(
 	parameter C_MAX_WIDTH       = 4096,
 	parameter C_MAX_HEIGHT      = 2160,
 	parameter C_MAX_BURST_SIZE  = 256, // bytes per burst (FIFO depth C_MAX_BURST_SIZE >> 2)
-	parameter C_COMP_PER_PIXEL  = 3,
-	parameter C_BITS_PER_COMP   = 8,
-	parameter C_PIXELS_PER_BEAT = 4,
 
 	// Do not override parameters below this line
 	parameter KEEP_WIDTH     = C_DATA_WIDTH / 8,
 	parameter DESC_WIDTH     = 32+32+32, // {bytes, addr_hi, addr_lo}
-	parameter BITS_PER_PIXEL = C_BITS_PER_COMP * C_COMP_PER_PIXEL,
-	parameter S_DATA_WIDTH   = $floor(((BITS_PER_PIXEL * C_PIXELS_PER_BEAT) + 7) / 8) * 8,
+	parameter S_DATA_WIDTH   = 3 * 32, // 3DWs
 	parameter S_KEEP_WIDTH   = ((S_DATA_WIDTH + 7) / 8)
 ) (
 	input clk,
@@ -40,7 +36,8 @@ module tlp_dma_wr #(
 
 	// desc_rd_U signals
 	output reg             desc_rd_rd_en,
-	input [DESC_WIDTH-1:0] desc_rd_rd_data,
+	input [63:0]           desc_rd_data_addr,
+	input [31:0]           desc_rd_data_bytes,
 	input                  desc_rd_data_valid,
 	output reg             desc_rd_ap_start,
 	input                  desc_rd_ap_ready,
@@ -74,13 +71,11 @@ module tlp_dma_wr #(
 	output ap_idle
 );
 	`include "err_mask.vh"
-	// `define USE_FIFO_FWFT
 
-	localparam MAX_BURST_DW = C_MAX_BURST_SIZE >> 2;
 	localparam BURST_WIDTH  = $clog2(C_MAX_BURST_SIZE + 1);
 	localparam MAX_SIZE     = C_MAX_WIDTH * C_MAX_HEIGHT * 4;
 	localparam SIZE_WIDTH   = $clog2(MAX_SIZE + 1);
-	localparam S_FIFO_WIDTH = S_DATA_WIDTH * 2;
+	localparam S_FIFO_WIDTH = 6 * 32; // 6DWs
 
 	localparam TLP_MEM_WR32_FMT_TYPE = 7'b10_00000;
 	localparam TLP_MEM_WR64_FMT_TYPE = 7'b11_00000;
@@ -106,8 +101,6 @@ module tlp_dma_wr #(
 	reg [63:0]               desc_addr_next_int;
 	reg [BURST_WIDTH-1:0]    burst_bytes;
 	reg [1:0]                tlp_payload_dws;
-	reg [3:0]                tlp_payload_bytes;
-	reg [6:0]                tlp_payload_bits;
 
 	wire m_axis_rr_fire;
 	wire s_axis_fire;
@@ -123,10 +116,9 @@ module tlp_dma_wr #(
 	reg [9:0]  tlp_hdr_len;
 
 	reg [S_FIFO_WIDTH-1:0] s_fifo;
-	reg [4:0]              s_bytes;
-	reg [7:0]              s_bits;
-	wire [31:0]            s_pci_dw0;
-	wire [31:0]            s_pci_dw1;
+	reg [2:0]              s_fifo_dws;
+	wire [31:0]            s_fifo_pci_dw0;
+	wire [31:0]            s_fifo_pci_dw1;
 
 	assign ap_idle = (ap_state == AP_STATE_IDLE);
 	assign ap_done = (ap_state == AP_STATE_FINISH);
@@ -168,16 +160,16 @@ module tlp_dma_wr #(
 				AP_STATE_WAIT_DESC: begin
 					if(desc_rd_data_valid) begin
 						ap_state <= AP_STATE_DMA_WR_NEXT;
-						desc_addr_int <= desc_rd_rd_data[63:0];
-						desc_bytes_int <= desc_rd_rd_data[64 +: 32];
-						desc_addr_32bit <= (desc_rd_rd_data[32 +: 32] == 32'b0);
+						desc_addr_int <= desc_rd_data_addr;
+						desc_bytes_int <= desc_rd_data_bytes;
+						desc_addr_32bit <= (desc_rd_data_addr[63:32] == 32'b0);
 					end
 				end
 
 				AP_STATE_DMA_WR_NEXT: begin
 					ap_state <= AP_STATE_DMA_WR;
 					tlp_hdr_idx <= 0;
-					tlp_hdr_len <= (burst_bytes >> 2);
+					tlp_hdr_len <= burst_bytes[2 +: BURST_WIDTH-2]; // in DWs
 					desc_addr_next_int <= desc_addr_int + burst_bytes;
 					desc_bytes_int <= desc_bytes_int - burst_bytes;
 					size_int <= size_int - burst_bytes;
@@ -223,12 +215,10 @@ module tlp_dma_wr #(
 		end
 	end
 
-	// @COMB burst_bytes, @COMB tlp_payload_dws, @COMB tlp_payload_bytes, @COMB tlp_payload_bits
+	// @COMB burst_bytes, @COMB tlp_payload_dws
 	always @(*) begin
 		burst_bytes = 0;
 		tlp_payload_dws = 0;
-		tlp_payload_bytes = 0;
-		tlp_payload_bits = 0;
 
 		case(ap_state)
 			AP_STATE_DMA_WR_NEXT: begin
@@ -243,14 +233,10 @@ module tlp_dma_wr #(
 				case(tlp_hdr_idx)
 					1: begin
 						tlp_payload_dws = desc_addr_32bit ? 1 : 0;
-						tlp_payload_bytes = desc_addr_32bit ? 4 : 0;
-						tlp_payload_bits = desc_addr_32bit ? 32 : 0;
 					end
 
 					2: begin
 						tlp_payload_dws = (m_axis_rr_tkeep == 'hFF ? 2 : 1);
-						tlp_payload_bytes = (m_axis_rr_tkeep == 'hFF ? 8 : 4);
-						tlp_payload_bits = (m_axis_rr_tkeep == 'hFF ? 64 : 32);
 					end
 				endcase
 			end
@@ -290,6 +276,9 @@ module tlp_dma_wr #(
 			end
 		endcase
 	end
+
+	assign s_fifo_pci_dw0 = {s_fifo[0*8 +: 8], s_fifo[1*8 +: 8], s_fifo[2*8 +: 8], s_fifo[3*8 +: 8]};
+	assign s_fifo_pci_dw1 = {s_fifo[4*8 +: 8], s_fifo[5*8 +: 8], s_fifo[6*8 +: 8], s_fifo[7*8 +: 8]};
 
 	// @COMB m_axis_rr_tdata, @COMB m_axis_rr_tkeep, @COMB m_axis_rr_tlast, @COMB m_axis_rr_tvalid
 	always @(*) begin
@@ -332,11 +321,11 @@ module tlp_dma_wr #(
 							m_axis_rr_tlast = (tlp_hdr_len == 1);
 							m_axis_rr_tdata = {
 								// DW3 Data
-								s_pci_dw0,
+								s_fifo_pci_dw0,
 								// DW2 Addr LO
 								{desc_addr_int[31:2], 2'b00}
 							};
-							m_axis_rr_tvalid = (s_bytes >= tlp_payload_bytes);
+							m_axis_rr_tvalid = (s_fifo_dws >= tlp_payload_dws);
 						end else begin
 							m_axis_rr_tlast = 0;
 							m_axis_rr_tdata = {
@@ -355,16 +344,16 @@ module tlp_dma_wr #(
 
 						if(m_axis_rr_tkeep == 8'hFF) begin
 							m_axis_rr_tdata = {
-								s_pci_dw1,
-								s_pci_dw0
+								s_fifo_pci_dw1,
+								s_fifo_pci_dw0
 							};
-							m_axis_rr_tvalid = (s_bytes >= tlp_payload_bytes);
+							m_axis_rr_tvalid = (s_fifo_dws >= tlp_payload_dws);
 						end else begin
 							m_axis_rr_tdata = {
 								32'd0,
-								s_pci_dw0
+								s_fifo_pci_dw0
 							};
-							m_axis_rr_tvalid = (s_bytes >= tlp_payload_bytes);
+							m_axis_rr_tvalid = (s_fifo_dws >= tlp_payload_dws);
 						end
 					end
 				endcase
@@ -372,12 +361,11 @@ module tlp_dma_wr #(
 		endcase
 	end
 
-	// @FF s_fifo, @FF s_bytes, @FF s_bits
+	// @FF s_fifo, @FF s_fifo_dws
 	always @(posedge clk or negedge rst_n) begin
 		if(~rst_n) begin
 			s_fifo <= 0;
-			s_bytes <= 0;
-			s_bits <= 0;
+			s_fifo_dws <= 0;
 		end else begin
 			case(ap_state)
 				AP_STATE_DMA_WR: begin
@@ -385,21 +373,82 @@ module tlp_dma_wr #(
 						1, 2: begin
 							case({s_axis_fire, m_axis_rr_fire})
 								2'b01: begin
-									s_fifo <= (s_fifo >> tlp_payload_bits);
-									s_bytes <= s_bytes - tlp_payload_bytes;
-									s_bits <= s_bits - tlp_payload_bits;
+									// s_fifo[0*32 +: s_fifo_dws*32] <= s_fifo[tlp_payload_dws*32 +: s_fifo_dws*32];
+									case(tlp_payload_dws)
+										1:
+											case(s_fifo_dws)
+												1: s_fifo[0*32 +: 1*32] <= s_fifo[1*32 +: 1*32];
+												2: s_fifo[0*32 +: 2*32] <= s_fifo[1*32 +: 2*32];
+												3: s_fifo[0*32 +: 3*32] <= s_fifo[1*32 +: 3*32];
+												default: ;
+											endcase
+										2:
+											case(s_fifo_dws)
+												1: s_fifo[0*32 +: 1*32] <= s_fifo[2*32 +: 1*32];
+												2: s_fifo[0*32 +: 2*32] <= s_fifo[2*32 +: 2*32];
+												3: s_fifo[0*32 +: 3*32] <= s_fifo[2*32 +: 3*32];
+												default: ;
+											endcase
+										default: ;
+									endcase
+									s_fifo_dws <= s_fifo_dws - tlp_payload_dws;
 								end
 
 								2'b10: begin
-									s_fifo <= (s_axis_tdata << s_bits) | (s_fifo & (~({S_FIFO_WIDTH{1'b1}} << s_bits)));
-									s_bytes <= s_bytes + (S_DATA_WIDTH / 8);
-									s_bits <= s_bits + S_DATA_WIDTH;
+									// s_fifo[s_fifo_dws*32 +: S_DATA_WIDTH] <= s_axis_tdata;
+									case(s_fifo_dws)
+										0: s_fifo[0*32 +: S_DATA_WIDTH] <= s_axis_tdata;
+										1: s_fifo[1*32 +: S_DATA_WIDTH] <= s_axis_tdata;
+										2: s_fifo[2*32 +: S_DATA_WIDTH] <= s_axis_tdata;
+										3: s_fifo[3*32 +: S_DATA_WIDTH] <= s_axis_tdata;
+										default: ;
+									endcase
+									s_fifo_dws <= s_fifo_dws + (S_DATA_WIDTH / 32);
 								end
 
 								2'b11: begin
-									s_fifo <= (s_axis_tdata << (s_bits + S_DATA_WIDTH - tlp_payload_bits));
-									s_bytes <= s_bytes + (S_DATA_WIDTH / 8) - tlp_payload_bytes;
-									s_bits <= s_bits + S_DATA_WIDTH - tlp_payload_bits;
+									// s_fifo[0*32 +: (s_fifo_dws-tlp_payload_dws)*32] <= s_fifo[tlp_payload_dws*32 +: (s_fifo_dws-tlp_payload_dws)*32];
+									case(tlp_payload_dws)
+										1:
+											case(s_fifo_dws)
+												2: s_fifo[0*32 +: 1*32] <= s_fifo[1*32 +: 1*32];
+												3: s_fifo[0*32 +: 2*32] <= s_fifo[1*32 +: 2*32];
+												default: ;
+											endcase
+										2:
+											case(s_fifo_dws)
+												3: s_fifo[0*32 +: 1*32] <= s_fifo[2*32 +: 1*32];
+												default: ;
+											endcase
+										default: ;
+									endcase
+
+									// s_fifo[(s_fifo_dws-tlp_payload_dws)*32 +: S_DATA_WIDTH] <= s_axis_tdata;
+									case(tlp_payload_dws)
+										0:
+											case(s_fifo_dws)
+												0: s_fifo[0*32 +: S_DATA_WIDTH] <= s_axis_tdata;
+												1: s_fifo[1*32 +: S_DATA_WIDTH] <= s_axis_tdata;
+												2: s_fifo[2*32 +: S_DATA_WIDTH] <= s_axis_tdata;
+												3: s_fifo[3*32 +: S_DATA_WIDTH] <= s_axis_tdata;
+												default: ;
+											endcase
+										1:
+											case(s_fifo_dws)
+												1: s_fifo[0*32 +: S_DATA_WIDTH] <= s_axis_tdata;
+												2: s_fifo[1*32 +: S_DATA_WIDTH] <= s_axis_tdata;
+												3: s_fifo[2*32 +: S_DATA_WIDTH] <= s_axis_tdata;
+												default: ;
+											endcase
+										2:
+											case(s_fifo_dws)
+												2: s_fifo[0*32 +: S_DATA_WIDTH] <= s_axis_tdata;
+												3: s_fifo[1*32 +: S_DATA_WIDTH] <= s_axis_tdata;
+												default: ;
+											endcase
+										default: ;
+									endcase
+									s_fifo_dws <= s_fifo_dws + (S_DATA_WIDTH / 32) - tlp_payload_dws;
 								end
 							endcase
 						end
@@ -409,9 +458,6 @@ module tlp_dma_wr #(
 		end
 	end
 
-	assign s_pci_dw0 = {s_fifo[0*8 +: 8], s_fifo[1*8 +: 8], s_fifo[2*8 +: 8], s_fifo[3*8 +: 8]};
-	assign s_pci_dw1 = {s_fifo[4*8 +: 8], s_fifo[5*8 +: 8], s_fifo[6*8 +: 8], s_fifo[7*8 +: 8]};
-
 	// @COMB s_axis_tready
 	always @(*) begin
 		s_axis_tready = 0;
@@ -420,7 +466,7 @@ module tlp_dma_wr #(
 			AP_STATE_DMA_WR: begin
 				case(tlp_hdr_idx)
 					1, 2: begin
-						if(s_bytes < tlp_payload_bytes) begin
+						if(s_fifo_dws <= ((S_FIFO_WIDTH - S_DATA_WIDTH) / 32)) begin
 							s_axis_tready = 1;
 						end
 					end

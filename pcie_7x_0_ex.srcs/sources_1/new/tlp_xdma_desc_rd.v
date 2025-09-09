@@ -26,8 +26,7 @@ module tlp_xdma_desc_rd #(
 	parameter C_MAX_BURST_SIZE = 256, // bytes per burst
 
 	// Do not override parameters below this line
-	parameter KEEP_WIDTH   = C_DATA_WIDTH / 8,
-	parameter DESC_WIDTH   = 32+32+32 // {bytes, addr_hi, addr_lo}
+	parameter KEEP_WIDTH   = C_DATA_WIDTH / 8
 ) (
 	input clk,
 	input rst_n,
@@ -49,9 +48,10 @@ module tlp_xdma_desc_rd #(
 	input [15:0] cfg_completer_id,
 
 	// FIFO RD
-	input                   rd_en,
-	output [DESC_WIDTH-1:0] rd_data,
-	output                  data_valid,
+	input         rd_en,
+	output [63:0] data_addr,
+	output [31:0] data_bytes,
+	output        data_valid,
 
 	// ap params
 	input [63:0]      DESC_ADDR,
@@ -69,6 +69,7 @@ module tlp_xdma_desc_rd #(
 
 	localparam MAX_BURST_DW   = C_MAX_BURST_SIZE >> 2;
 	localparam BYTES_PER_DESC = 32;
+	localparam DESC_WIDTH     = 32+64; // {bytes, addr}
 
 	localparam TLP_MEM_RD32_FMT_TYPE = 7'b00_00000;
 	localparam TLP_MEM_RD64_FMT_TYPE = 7'b01_00000;
@@ -415,7 +416,7 @@ module tlp_xdma_desc_rd #(
 		.wr_en(fifo_xdma_desc_wr_en),
 		.wr_data(fifo_xdma_desc_wr_data),
 		.rd_en(rd_en),
-		.rd_data(rd_data),
+		.rd_data({data_bytes, data_addr}),
 		.full(fifo_xdma_desc_full),
 		.empty(fifo_xdma_desc_empty),
 		.data_valid(data_valid)
@@ -430,7 +431,7 @@ module tlp_xdma_desc_rd #(
 		.full(fifo_xdma_desc_full),
 
 		.rd_en(rd_en),
-		.dout(rd_data),
+		.dout({data_bytes, data_addr}),
 		.valid(data_valid),
 		.empty(fifo_xdma_desc_empty)
 	);

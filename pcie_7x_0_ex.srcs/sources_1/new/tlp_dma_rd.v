@@ -39,7 +39,8 @@ module tlp_dma_rd #(
 
 	// desc_rd_U signals
 	output reg             desc_rd_rd_en,
-	input [DESC_WIDTH-1:0] desc_rd_rd_data,
+	input [63:0]           desc_rd_data_addr,
+	input [31:0]           desc_rd_data_bytes,
 	input                  desc_rd_data_valid,
 	output reg             desc_rd_ap_start,
 	input                  desc_rd_ap_ready,
@@ -121,16 +122,6 @@ module tlp_dma_rd #(
 	assign ap_done = (ap_state == AP_STATE_FINISH);
 	assign ap_ready = ap_done;
 
-	addr_adder #(
-		.C_INC_WIDTH(SIZE_WIDTH)
-	) addr_adder_U (
-		.clk(clk),
-		.rst_n(rst_n),
-		.addr(buf_addr_int),
-		.inc(addr_adder_inc),
-		.addr_next(buf_addr_next)
-	);
-
 	assign tlp_hdr_fmt_type = (desc_addr_32bit ? TLP_MEM_RD32_FMT_TYPE : TLP_MEM_RD64_FMT_TYPE);
 	assign tlp_hdr_tc = 3'b0;
 	assign tlp_hdr_td = 1'b0;
@@ -168,9 +159,9 @@ module tlp_dma_rd #(
 				AP_STATE_WAIT_DESC: begin
 					if(desc_rd_data_valid) begin
 						ap_state <= AP_STATE_DMA_RD_NEXT;
-						desc_addr_int <= desc_rd_rd_data[63:0];
-						desc_bytes_int <= desc_rd_rd_data[64 +: 32];
-						desc_addr_32bit <= (desc_rd_rd_data[32 +: 32] == 32'b0);
+						desc_addr_int <= desc_rd_data_addr;
+						desc_bytes_int <= desc_rd_data_bytes;
+						desc_addr_32bit <= (desc_rd_data_addr[63:32] == 32'b0);
 					end
 				end
 
