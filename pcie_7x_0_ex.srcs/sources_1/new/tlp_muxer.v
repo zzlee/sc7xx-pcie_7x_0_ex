@@ -90,7 +90,8 @@ module tlp_muxer #(
 	wire m_axis_fire;
 
 	priority_encoder #(
-		.WIDTH(SRC_COUNT)
+		.WIDTH(SRC_COUNT),
+		.LSB_HIGH_PRIORITY(1)
 	) slaves_arb_U(
 		.input_unencoded(slaves_arb_input_unencoded_reg),
 		.output_valid(slaves_arb_output_valid),
