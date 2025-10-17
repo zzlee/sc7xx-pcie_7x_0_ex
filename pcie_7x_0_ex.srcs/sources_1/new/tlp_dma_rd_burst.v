@@ -48,7 +48,7 @@ module tlp_dma_rd_burst #(
 	input                         m_axis_tready,
 
 	// ap args
-	input [BURST_WIDTH-1:0]    s_axis_ap_burst_bytes,
+	input [15:0]    s_axis_ap_tdata,
 	input                      s_axis_ap_tvalid,
 	output reg                 s_axis_ap_tready,
 	output                     fifo_tx_empty
@@ -72,6 +72,7 @@ module tlp_dma_rd_burst #(
 	reg [0:0]                tlp_hdr_idx;
 	reg [C_RC_CNT_WIDTH-1:0] tx_burst_idx;
 	reg [BURST_WIDTH-1:0]    tx_burst_bytes;
+	wire [BURST_WIDTH-1:0]   s_axis_ap_burst_bytes;
 
 	// fifo_tx_U signals
 	reg                    fifo_tx_wr_en;
@@ -84,6 +85,7 @@ module tlp_dma_rd_burst #(
 
 	assign m_axis_fire = m_axis_tready & m_axis_tvalid;
 	assign s_axis_ap_fire = s_axis_ap_tready & s_axis_ap_tvalid;
+	assign s_axis_ap_burst_bytes = s_axis_ap_tdata[0 +: BURST_WIDTH];
 
 	fifo_fwft2 #(
 		.DATA_WIDTH(BURST_WIDTH),

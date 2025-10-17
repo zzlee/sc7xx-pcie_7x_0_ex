@@ -48,10 +48,9 @@ module tlp_xdma_desc_rd #(
 	input [15:0] cfg_completer_id,
 
 	// FIFO RD
-	input         rd_en,
-	output [63:0] data_addr,
-	output [31:0] data_bytes,
-	output        data_valid,
+	input         fifo0_rd_en,
+	output [95:0] fifo0_dout,
+	output        fifo0_valid,
 
 	// ap params
 	input [63:0]      DESC_ADDR,
@@ -127,7 +126,7 @@ module tlp_xdma_desc_rd #(
 
 	// fifo_xdma_desc_U signals
 	reg                  fifo_xdma_desc_wr_en;
-	reg [DESC_WIDTH-1:0] fifo_xdma_desc_wr_data;
+	reg [DESC_WIDTH-1:0] fifo_xdma_desc_din;
 	wire                 fifo_xdma_desc_full;
 	wire                 fifo_xdma_desc_empty;
 
@@ -414,12 +413,12 @@ module tlp_xdma_desc_rd #(
 		.clk(clk),
 		.rst_n(rst_n),
 		.wr_en(fifo_xdma_desc_wr_en),
-		.wr_data(fifo_xdma_desc_wr_data),
-		.rd_en(rd_en),
-		.rd_data({data_bytes, data_addr}),
+		.wr_data(fifo_xdma_desc_din),
+		.rd_en(fifo0_rd_en),
+		.rd_data(fifo0_dout),
 		.full(fifo_xdma_desc_full),
 		.empty(fifo_xdma_desc_empty),
-		.data_valid(data_valid)
+		.data_valid(fifo0_valid)
 	);
 `else // USE_FIFO_FWFT
 	fifo_xdma_desc fifo_xdma_desc_U(
@@ -427,31 +426,31 @@ module tlp_xdma_desc_rd #(
 		.srst(~rst_n),
 
 		.wr_en(fifo_xdma_desc_wr_en),
-		.din(fifo_xdma_desc_wr_data),
+		.din(fifo_xdma_desc_din),
 		.full(fifo_xdma_desc_full),
 
-		.rd_en(rd_en),
-		.dout({data_bytes, data_addr}),
-		.valid(data_valid),
+		.rd_en(fifo0_rd_en),
+		.dout(fifo0_dout),
+		.valid(fifo0_valid),
 		.empty(fifo_xdma_desc_empty)
 	);
 `endif // USE_FIFO_FWFT
 
-	// @COMB fifo_xdma_desc_wr_en, @COMB fifo_xdma_desc_wr_data
+	// @COMB fifo_xdma_desc_wr_en, @COMB fifo_xdma_desc_din
 	always @(*) begin
 		fifo_xdma_desc_wr_en = 0;
-		fifo_xdma_desc_wr_data = 'hEEFFAABBCAFECAFE;
+		fifo_xdma_desc_din = 'hEEFFAABBCAFECAFE;
 
 		case(ap_state)
 			AP_STATE_WR_FIFO: begin
 				if(! fifo_xdma_desc_full) begin
 					fifo_xdma_desc_wr_en = 1;
-					fifo_xdma_desc_wr_data[64 +: 32] = desc_bytes;
+					fifo_xdma_desc_din[64 +: 32] = desc_bytes;
 
 					if(C_DMA_DIR == DMA_FROM_DEVICE) begin
-						fifo_xdma_desc_wr_data[63:0] = {desc_dst_addr_hi, desc_dst_addr_lo};
+						fifo_xdma_desc_din[0 +: 64] = {desc_dst_addr_hi, desc_dst_addr_lo};
 					end else if(C_DMA_DIR == DMA_TO_DEVICE) begin
-						fifo_xdma_desc_wr_data[63:0] = {desc_src_addr_hi, desc_src_addr_lo};
+						fifo_xdma_desc_din[0 +: 64] = {desc_src_addr_hi, desc_src_addr_lo};
 					end
 				end
 			end

@@ -64,6 +64,34 @@ module tlp_muxer #(
 	input                    s04_axis_tvalid,
 	output                   s04_axis_tready,
 
+	// Input 5
+	input [C_DATA_WIDTH-1:0] s05_axis_tdata,
+	input [KEEP_WIDTH-1:0]   s05_axis_tkeep,
+	input                    s05_axis_tlast,
+	input                    s05_axis_tvalid,
+	output                   s05_axis_tready,
+
+	// Input 6
+	input [C_DATA_WIDTH-1:0] s06_axis_tdata,
+	input [KEEP_WIDTH-1:0]   s06_axis_tkeep,
+	input                    s06_axis_tlast,
+	input                    s06_axis_tvalid,
+	output                   s06_axis_tready,
+
+	// Input 7
+	input [C_DATA_WIDTH-1:0] s07_axis_tdata,
+	input [KEEP_WIDTH-1:0]   s07_axis_tkeep,
+	input                    s07_axis_tlast,
+	input                    s07_axis_tvalid,
+	output                   s07_axis_tready,
+
+	// Input 8
+	input [C_DATA_WIDTH-1:0] s08_axis_tdata,
+	input [KEEP_WIDTH-1:0]   s08_axis_tkeep,
+	input                    s08_axis_tlast,
+	input                    s08_axis_tvalid,
+	output                   s08_axis_tready,
+
 	// Output
 	output reg [C_DATA_WIDTH-1:0] m_axis_tdata,
 	output reg [KEEP_WIDTH-1:0]   m_axis_tkeep,
@@ -72,7 +100,8 @@ module tlp_muxer #(
 	input                         m_axis_tready,
 	output [C_USER_WIDTH-1:0]     m_axis_tuser
 );
-	localparam SRC_COUNT = 5;
+	localparam SRC_COUNT = 12;
+	genvar gen_i;
 	integer i;
 
 	reg [SRC_COUNT-1:0]          slaves_arb_input_unencoded_reg;
@@ -85,7 +114,6 @@ module tlp_muxer #(
 	wire                    s_axis_tlast [SRC_COUNT-1:0];
 	wire [SRC_COUNT-1:0]    s_axis_tvalid;
 	reg                     s_axis_tready [SRC_COUNT-1:0];
-	wire [C_USER_WIDTH-1:0] s_axis_tuser [SRC_COUNT-1:0];
 
 	wire m_axis_fire;
 
@@ -130,6 +158,39 @@ module tlp_muxer #(
 	assign s_axis_tlast[4] = s04_axis_tlast;
 	assign s_axis_tvalid[4] = s04_axis_tvalid;
 	assign s04_axis_tready = s_axis_tready[4];
+
+	assign s_axis_tdata[5] = s05_axis_tdata;
+	assign s_axis_tkeep[5] = s05_axis_tkeep;
+	assign s_axis_tlast[5] = s05_axis_tlast;
+	assign s_axis_tvalid[5] = s05_axis_tvalid;
+	assign s05_axis_tready = s_axis_tready[5];
+
+	assign s_axis_tdata[6] = s06_axis_tdata;
+	assign s_axis_tkeep[6] = s06_axis_tkeep;
+	assign s_axis_tlast[6] = s06_axis_tlast;
+	assign s_axis_tvalid[6] = s06_axis_tvalid;
+	assign s06_axis_tready = s_axis_tready[6];
+
+	assign s_axis_tdata[7] = s07_axis_tdata;
+	assign s_axis_tkeep[7] = s07_axis_tkeep;
+	assign s_axis_tlast[7] = s07_axis_tlast;
+	assign s_axis_tvalid[7] = s07_axis_tvalid;
+	assign s07_axis_tready = s_axis_tready[7];
+
+	assign s_axis_tdata[8] = s08_axis_tdata;
+	assign s_axis_tkeep[8] = s08_axis_tkeep;
+	assign s_axis_tlast[8] = s08_axis_tlast;
+	assign s_axis_tvalid[8] = s08_axis_tvalid;
+	assign s08_axis_tready = s_axis_tready[8];
+
+	generate
+		for(gen_i = 9;gen_i < SRC_COUNT;gen_i = gen_i + 1) begin
+			assign s_axis_tdata[gen_i] = 0;
+			assign s_axis_tkeep[gen_i] = 0;
+			assign s_axis_tlast[gen_i] = 0;
+			assign s_axis_tvalid[gen_i] = 0;
+		end
+	endgenerate
 // ----------------------------------------------------------
 
 	assign m_axis_tuser[0] = 1'b0; // Unused for V6

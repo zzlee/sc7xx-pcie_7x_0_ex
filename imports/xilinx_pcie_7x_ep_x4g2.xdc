@@ -151,7 +151,6 @@ create_generated_clock -name clk_125mhz_mux_x0y0 -source [get_pins pcie_7x_0_sup
 #
 create_generated_clock -name clk_250mhz_mux_x0y0 -source [get_pins pcie_7x_0_support_i/pipe_clock_i/pclk_i1_bufgctrl.pclk_i1/I1] -divide_by 1 -add -master_clock clk_250mhz_x0y0 [get_pins pcie_7x_0_support_i/pipe_clock_i/pclk_i1_bufgctrl.pclk_i1/O]
 #
-set_clock_groups -name pcieclkmux -physically_exclusive -group clk_125mhz_mux_x0y0 -group clk_250mhz_mux_x0y0
 
 #
 # Timing ignoring the below pins to avoid CDC analysis, but care has been taken in RTL to sync properly to other clock domain.
@@ -168,6 +167,8 @@ set_clock_groups -name pcieclkmux -physically_exclusive -group clk_125mhz_mux_x0
 
 #------------------------- Adding waiver -------------------------#
 
+
+set_false_path -from [get_pins -hierarchical -filter {NAME =~ *zzlab_env_ctrl*/*ap_rst_n*reg*/C}]
 set_property C_CLK_INPUT_FREQ_HZ 300000000 [get_debug_cores dbg_hub]
 set_property C_ENABLE_CLK_DIVIDER false [get_debug_cores dbg_hub]
 set_property C_USER_SCAN_CHAIN 1 [get_debug_cores dbg_hub]

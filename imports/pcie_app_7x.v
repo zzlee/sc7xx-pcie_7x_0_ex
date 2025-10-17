@@ -161,9 +161,10 @@ module  pcie_app_7x#(
   assign cfg_pm_force_state_en  = 1'b0;            // Do not qualify cfg_pm_force_state
   assign cfg_pm_force_state  = 2'b00;              // Do not move force core into specific PM state
   assign cfg_dsn = {`PCI_EXP_EP_DSN_2, `PCI_EXP_EP_DSN_1};  // Assign the input DSN
-  // assign s_axis_tx_tuser[0] = 1'b0;                // Unused for V6
-  // assign s_axis_tx_tuser[1] = 1'b0;                // Error forward packet
-  // assign s_axis_tx_tuser[2] = 1'b0;                // Stream packet
+  assign s_axis_tx_tuser[0] = 1'b0;                // Unused for V6
+  assign s_axis_tx_tuser[1] = 1'b0;                // Error forward packet
+  assign s_axis_tx_tuser[2] = 1'b0;                // Stream packet
+  assign s_axis_tx_tuser[3] = 1'b0;                // Unused discontinue
 
   assign cfg_err_cor = 1'b0;                       // Never report Correctable Error
   assign cfg_err_ur = 1'b0;                        // Never report UR
@@ -270,7 +271,7 @@ module  pcie_app_7x#(
     .s_axis_tx_tkeep  ( s_axis_tx_tkeep ),          // O
     .s_axis_tx_tlast  ( s_axis_tx_tlast ),          // O
     .s_axis_tx_tvalid ( s_axis_tx_tvalid ),         // O
-    .s_axis_tx_tuser  ( s_axis_tx_tuser ),          // O
+    // .s_axis_tx_tuser  ( s_axis_tx_tuser ),          // O
 
     .m_axis_rx_tdata ( m_axis_rx_tdata ),           // I
     .m_axis_rx_tkeep ( m_axis_rx_tkeep ),           // I

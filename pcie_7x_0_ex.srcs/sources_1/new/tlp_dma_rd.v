@@ -31,20 +31,18 @@ module tlp_dma_rd #(
 
 	// Do not override parameters below this line
 	parameter KEEP_WIDTH  = C_DATA_WIDTH / 8,
-	parameter BURST_WIDTH = $clog2(C_MAX_BURST_SIZE + 1),
-	parameter DESC_WIDTH  = 32+32+32 // {bytes, addr_hi, addr_lo}
+	parameter BURST_WIDTH = $clog2(C_MAX_BURST_SIZE + 1)
 ) (
 	input clk,
 	input rst_n,
 
 	// desc_rd_U signals
-	output reg             desc_rd_rd_en,
-	input [63:0]           desc_rd_data_addr,
-	input [31:0]           desc_rd_data_bytes,
-	input                  desc_rd_data_valid,
-	output reg             desc_rd_ap_start,
-	input                  desc_rd_ap_ready,
-	input [31:0]           desc_rd_ERR_MASK,
+	output reg   desc_rd_fifo0_rd_en,
+	input [95:0] desc_rd_fifo0_dout,
+	input        desc_rd_fifo0_valid,
+	output reg   desc_rd_ap_start,
+	input        desc_rd_ap_ready,
+	input [31:0] desc_rd_ERR_MASK,
 
 	// RR TLP
 	output reg [C_DATA_WIDTH-1:0] m_axis_rr_tdata,
@@ -54,10 +52,10 @@ module tlp_dma_rd #(
 	input                         m_axis_rr_tready,
 
 	// dma_rd_burst_U
-	output reg [BURST_WIDTH-1:0] dma_rd_burst_s_axis_ap_burst_bytes,
-	output reg                   dma_rd_burst_s_axis_ap_tvalid,
-	input                        dma_rd_burst_s_axis_ap_tready,
-	input                        dma_rd_burst_fifo_empty,
+	output [15:0] dma_rd_burst_s_axis_ap_tdata,
+	output reg    dma_rd_burst_s_axis_ap_tvalid,
+	input         dma_rd_burst_s_axis_ap_tready,
+	input         dma_rd_burst_fifo_empty,
 
 	input [15:0] cfg_completer_id,
 
@@ -100,6 +98,9 @@ module tlp_dma_rd #(
 	reg                      desc_addr_32bit;
 	reg [63:0]               desc_addr_next_int;
 	reg [BURST_WIDTH-1:0]    burst_bytes;
+	wire [63:0]              desc_rd_fifo0_addr;
+	wire [31:0]              desc_rd_fifo0_bytes;
+	reg [BURST_WIDTH-1:0]    dma_rd_burst_s_axis_ap_burst_bytes;
 
 	wire m_axis_rr_fire;
 
@@ -121,6 +122,10 @@ module tlp_dma_rd #(
 	assign ap_idle = (ap_state == AP_STATE_IDLE);
 	assign ap_done = (ap_state == AP_STATE_FINISH);
 	assign ap_ready = ap_done;
+
+	assign desc_rd_fifo0_addr = desc_rd_fifo0_dout[0 +: 64];
+	assign desc_rd_fifo0_bytes = desc_rd_fifo0_dout[64 +: 32];
+	assign dma_rd_burst_s_axis_ap_tdata[0 +: BURST_WIDTH] = dma_rd_burst_s_axis_ap_burst_bytes;
 
 	assign tlp_hdr_fmt_type = (desc_addr_32bit ? TLP_MEM_RD32_FMT_TYPE : TLP_MEM_RD64_FMT_TYPE);
 	assign tlp_hdr_tc = 3'b0;
@@ -157,11 +162,11 @@ module tlp_dma_rd #(
 					end
 
 				AP_STATE_WAIT_DESC: begin
-					if(desc_rd_data_valid) begin
+					if(desc_rd_fifo0_valid) begin
 						ap_state <= AP_STATE_DMA_RD_NEXT;
-						desc_addr_int <= desc_rd_data_addr;
-						desc_bytes_int <= desc_rd_data_bytes;
-						desc_addr_32bit <= (desc_rd_data_addr[63:32] == 32'b0);
+						desc_addr_int <= desc_rd_fifo0_addr;
+						desc_bytes_int <= desc_rd_fifo0_bytes;
+						desc_addr_32bit <= (desc_rd_fifo0_addr[63:32] == 32'b0);
 					end
 				end
 
@@ -250,14 +255,14 @@ module tlp_dma_rd #(
 		end
 	end
 
-	// @COMB desc_rd_rd_en
+	// @COMB desc_rd_fifo0_rd_en
 	always @(*) begin
-		desc_rd_rd_en = 0;
+		desc_rd_fifo0_rd_en = 0;
 
 		case(ap_state)
 			AP_STATE_WAIT_DESC: begin
-				if(desc_rd_data_valid) begin
-					desc_rd_rd_en = 1;
+				if(desc_rd_fifo0_valid) begin
+					desc_rd_fifo0_rd_en = 1;
 				end
 			end
 		endcase
